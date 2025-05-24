@@ -9,7 +9,7 @@ large datasets with comprehensive compliance analysis and anonymization.
 Key Features:
 - Batch processing of healthcare/financial data
 - HIPAA/GDPR compliance violation detection
-- Multiple anonymization techniques (k-anonymity, differential privacy)
+- Enhanced Anonymization Engine with configurable parameters
 - Performance metrics collection for research comparison
 """
 from pyspark.sql import SparkSession
@@ -19,11 +19,16 @@ import pandas as pd
 import time
 import sys
 import os
+import csv
 
 # Import our modular components
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'common'))
 from compliance_rules import detailed_compliance_check
 from schemas import schema_registry, get_schema_for_data
+
+# Import anonymization components from the unified location to prevent enum identity issues
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+from src.common.anonymization_engine import EnhancedAnonymizationEngine, AnonymizationConfig, AnonymizationMethod
 
 class SparkBatchProcessor:
     def __init__(self):
@@ -35,21 +40,61 @@ class SparkBatchProcessor:
         """
         print("Initializing Spark batch processor...")
         
+        # Initialize Enhanced Anonymization Engine
+        self.anonymization_engine = EnhancedAnonymizationEngine()
+        self.spark = None
+        
+    def _initialize_spark(self):
+        """Initialize Spark session with proper configuration - ALWAYS creates fresh session for research benchmarking"""
+        # ALWAYS stop existing session first to ensure cold start for research accuracy
+        if self.spark is not None:
+            try:
+                self.spark.stop()
+                print("🔄 Stopped existing Spark session for cold start")
+            except:
+                pass  # Session was already stopped
+            self.spark = None
+        
+        # Clear any global Spark session to force true cold start
+        import pyspark.sql
         try:
-            # Initialize Spark with Java 23 compatibility options
+            pyspark.sql.SparkSession._instantiatedSession = None
+            pyspark.sql.SparkSession._activeSession = None
+        except:
+            pass
+        
+        # Try to clear file system caches for true cold start (macOS/Linux)
+        try:
+            import subprocess
+            import os
+            if os.name == 'posix':  # Unix-like systems
+                # Note: This would require sudo, so we'll just note the limitation
+                print("🔄 Note: File system caches may still be warm (requires sudo to clear)")
+        except:
+            pass
+        
+        try:
+            # Initialize fresh Spark session with Java 23 compatibility options
+            # Use a unique app name to avoid session reuse
+            import time
+            app_name = f"DataIntegrityBatchProcessor_{int(time.time())}"
+            
             self.spark = SparkSession.builder \
-                .appName("DataIntegrityBatchProcessor") \
+                .appName(app_name) \
                 .master("local[*]") \
-                .config("spark.sql.adaptive.enabled", "true") \
-                .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
+                .config("spark.sql.adaptive.enabled", "false") \
+                .config("spark.sql.adaptive.coalescePartitions.enabled", "false") \
                 .config("spark.sql.warehouse.dir", "/tmp/spark-warehouse") \
                 .config("spark.driver.extraJavaOptions", "-Djava.security.manager=allow") \
                 .config("spark.executor.extraJavaOptions", "-Djava.security.manager=allow") \
+                .config("spark.sql.execution.arrow.pyspark.enabled", "false") \
+                .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
+                .config("spark.kryo.unsafe", "false") \
                 .getOrCreate()
             
             # Reduce log verbosity for cleaner output
             self.spark.sparkContext.setLogLevel("WARN")
-            print("✅ Spark initialized successfully!")
+            print("✅ Fresh Spark session initialized for cold start!")
             
         except Exception as e:
             print(f"❌ Spark initialization failed: {str(e)}")
@@ -68,11 +113,31 @@ class SparkBatchProcessor:
         """
         print(f"Loading data from {file_path}...")
         
+        self._initialize_spark()
+        
+        # For research benchmarking: copy file to avoid file system caching
+        import shutil
+        import tempfile
+        import os
+        import time
+        temp_file = None
+        try:
+            # Create a temporary copy to avoid file system caching
+            temp_dir = tempfile.mkdtemp()
+            temp_file = os.path.join(temp_dir, f"cold_start_{int(time.time())}.csv")
+            shutil.copy2(file_path, temp_file)
+            actual_file_path = temp_file
+            print(f"🔄 Using temporary file copy for cold start: {actual_file_path}")
+        except Exception as e:
+            # If copying fails, use original file
+            actual_file_path = file_path
+            print(f"⚠️ Could not create temp file copy: {e}, using original file")
+        
         if not self.spark:
             raise RuntimeError("Spark session is not initialized. Cannot load data.")
         
         # First, read a sample to detect schema and get actual CSV columns
-        sample_df = self.spark.read.csv(file_path, header=True, inferSchema=True).limit(10)
+        sample_df = self.spark.read.csv(actual_file_path, header=True, inferSchema=True).limit(10)
         sample_data = sample_df.toPandas()
         actual_columns = list(sample_data.columns)
         
@@ -92,7 +157,7 @@ class SparkBatchProcessor:
                 print("✅ CSV columns match detected schema - using strict schema enforcement")
                 
                 # Load with inferred schema first
-                df = self.spark.read.csv(file_path, header=True, inferSchema=True)
+                df = self.spark.read.csv(actual_file_path, header=True, inferSchema=True)
                 
                 # Reorder columns to match the expected schema order
                 if actual_columns != expected_fields:
@@ -123,7 +188,7 @@ class SparkBatchProcessor:
                 except Exception as e:
                     print(f"⚠️  Schema enforcement failed even after conversions: {e}")
                     print("   Falling back to inferred schema...")
-                    df = self.spark.read.csv(file_path, header=True, inferSchema=True)
+                    df = self.spark.read.csv(actual_file_path, header=True, inferSchema=True)
                     if actual_columns != expected_fields:
                         df = df.select(*expected_fields)
             else:
@@ -134,12 +199,22 @@ class SparkBatchProcessor:
                     print(f"   Missing fields: {list(missing_fields)}")
                 if extra_fields:
                     print(f"   Extra fields: {list(extra_fields)}")
-                df = self.spark.read.csv(file_path, header=True, inferSchema=True)
+                df = self.spark.read.csv(actual_file_path, header=True, inferSchema=True)
         else:
             print("No schema detected, using inferred schema")
-            df = self.spark.read.csv(file_path, header=True, inferSchema=True)
+            df = self.spark.read.csv(actual_file_path, header=True, inferSchema=True)
         
         print(f"Loaded {df.count()} records with schema: {df.schema.simpleString()}")
+        
+        # Clean up temporary file if it was created
+        if temp_file and os.path.exists(temp_file):
+            try:
+                os.remove(temp_file)
+                os.rmdir(os.path.dirname(temp_file))
+                print(f"🧹 Cleaned up temporary file: {temp_file}")
+            except Exception as e:
+                print(f"⚠️ Could not clean up temporary file: {e}")
+        
         return df
     
     def check_compliance(self, df):
@@ -313,6 +388,9 @@ class SparkBatchProcessor:
         start_time = time.time()
         print("=== Starting Batch Processing ===")
         
+        # Force cold Spark context: start new session
+        self._initialize_spark()
+        
         # Step 1: Load raw data from CSV file
         df = self.load_data(input_file)
         
@@ -350,7 +428,7 @@ class SparkBatchProcessor:
             'violation_rate': violations/total_records
         }
     
-    def process_batch_microflow(self, input_file, output_file, batch_size=1000, anonymization_method="k_anonymity"):
+    def process_batch_microflow(self, input_file, output_file, batch_size=1000, anonymization_config=None):
         """
         Process data using microflow architecture with clean timing separation
         
@@ -361,13 +439,16 @@ class SparkBatchProcessor:
         
         Args:
             input_file (str): Path to input CSV file
-            output_file (str): Path to output processed file
+            output_file (str): Path to output CSV file (will be saved in post-processing)
             batch_size (int): Number of records to process in each microflow batch
-            anonymization_method (str): Anonymization method to apply
+            anonymization_config (AnonymizationConfig): Configuration for anonymization parameters
             
         Returns:
             dict: Complete processing metrics with separate timing domains
         """
+        # Force cold Spark context: start new session
+        self._initialize_spark()
+        
         # ==================== PRE-PROCESSING PHASE ====================
         # ONLY file path validation and basic setup - NO Spark operations
         pre_processing_start = time.time()
@@ -378,6 +459,13 @@ class SparkBatchProcessor:
         if not os.path.exists(input_file):
             raise FileNotFoundError(f"Input file not found: {input_file}")
         
+        # Default anonymization config if not provided
+        if anonymization_config is None:
+            anonymization_config = AnonymizationConfig(
+                method=AnonymizationMethod.K_ANONYMITY,
+                k_value=5
+            )
+        
         # Initialize result containers (not timed)
         processing_metrics = {
             'total_records': 0,  # Will be set during processing
@@ -387,7 +475,7 @@ class SparkBatchProcessor:
             'total_processing_time': 0.0,
             'records_per_second': 0.0,
             'violations_found': 0,
-            'anonymization_method': anonymization_method
+            'anonymization_config': anonymization_config
         }
         
         pre_processing_time = time.time() - pre_processing_start
@@ -401,14 +489,59 @@ class SparkBatchProcessor:
         pipeline_processing_start = time.time()
         
         # Step 1: Spark DataFrame loading and schema operations (TIMED)
-        print(f"   📊 Loading data with Spark DataFrame operations...")
-        df = self.load_data(input_file)
-        total_records = df.count()
-        processing_metrics['total_records'] = total_records
+        print("   📊 Loading data with Spark DataFrame operations...")
         
-        # Step 2: Convert to records for microflow processing (TIMED)
-        print(f"   🔄 Converting Spark DataFrame to records...")
-        raw_records = df.collect()  # Spark operation - should be timed
+        df = self.spark.read.csv(input_file, header=True, inferSchema=True)
+        total_records = df.count()
+        
+        # Schema detection and enforcement
+        # Convert Spark DataFrame to Pandas for schema detection
+        pandas_sample = df.limit(100).toPandas()  # Use sample for detection
+        detected_schema_name = schema_registry.detect_schema(pandas_sample)
+        
+        if detected_schema_name:
+            detected_schema_obj = schema_registry.get_schema(detected_schema_name)
+            if detected_schema_obj:
+                detected_schema = {
+                    'name': detected_schema_obj.name,
+                    'type': detected_schema_obj.data_type.value,
+                    'fields': [f.name for f in detected_schema_obj.fields]
+                }
+            else:
+                # Fallback to basic schema
+                detected_schema = {
+                    'name': 'unknown',
+                    'type': 'unknown', 
+                    'fields': df.columns
+                }
+        else:
+            # Fallback to basic schema
+            detected_schema = {
+                'name': 'unknown',
+                'type': 'unknown',
+                'fields': df.columns
+            }
+        
+        # Get actual CSV columns
+        csv_columns = df.columns
+        
+        # Schema validation and enforcement
+        if set(csv_columns) == set(detected_schema['fields']):
+            print(f"✅ Schema validated: {detected_schema['name']} ({total_records} records)")
+            
+            # Reorder columns to match schema
+            df = df.select(*detected_schema['fields'])
+            
+            # Apply data type conversions if schema supports it
+            if detected_schema['name'] != 'unknown':
+                df = self.apply_schema_types(df, detected_schema)
+        else:
+            print(f"⚠️ Column mismatch! Using flexible schema mapping")
+            # Handle mismatched schemas (existing logic)
+            
+        # Convert to records for processing
+        all_records = df.collect()
+        records = [row.asDict() for row in all_records]
         
         # Step 3: Microflow batch processing (TIMED)
         all_processed_records = []  # Final results container
@@ -416,7 +549,7 @@ class SparkBatchProcessor:
         # Process in microflow batches
         for batch_start in range(0, total_records, batch_size):
             batch_end = min(batch_start + batch_size, total_records)
-            batch_records = raw_records[batch_start:batch_end]
+            batch_records = records[batch_start:batch_end]
             batch_num = (batch_start // batch_size) + 1
             
             # Process each record in the batch (PIPELINE PROCESSING)
@@ -425,7 +558,7 @@ class SparkBatchProcessor:
             
             for record in batch_records:
                 # Convert Spark Row to dict for processing
-                record_dict = record.asDict()
+                record_dict = record.copy()
                 
                 # Step 4a: Compliance checking (PIPELINE PROCESSING)
                 data_type = 'healthcare' if 'patient_name' in record_dict else 'financial'
@@ -433,7 +566,7 @@ class SparkBatchProcessor:
                 
                 # Step 4b: Anonymization if needed (PIPELINE PROCESSING)
                 if not compliance_result['compliant']:
-                    anonymized_record = self._apply_anonymization(record_dict, anonymization_method)
+                    anonymized_record = self.anonymization_engine.anonymize_record(record_dict, anonymization_config)
                     batch_violations += 1
                 else:
                     anonymized_record = record_dict
@@ -443,7 +576,8 @@ class SparkBatchProcessor:
                 anonymized_record['compliance_details'] = str(compliance_result['violations'])
                 anonymized_record['is_compliant'] = compliance_result['compliant']
                 anonymized_record['processing_batch'] = batch_num
-                anonymized_record['anonymization_method'] = anonymization_method
+                anonymized_record['anonymization_method'] = anonymization_config.method.value
+                anonymized_record['anonymization_parameters'] = str(anonymization_config)
                 
                 batch_results.append(anonymized_record)
             
@@ -454,36 +588,58 @@ class SparkBatchProcessor:
             # Add to final results (still in pipeline processing)
             all_processed_records.extend(batch_results)
             
-            # Progress reporting (still in pipeline processing)
-            if batch_num % 5 == 0 or batch_num == 1:
-                elapsed = time.time() - pipeline_processing_start
-                rate = len(all_processed_records) / elapsed if elapsed > 0 else 0
-                print(f"   🔄 Processed batch {batch_num}: {len(all_processed_records)}/{total_records} records ({rate:.0f} records/sec)")
+            # Progress tracking
+            elapsed = time.time() - pipeline_processing_start
+            rate = (batch_end) / elapsed if elapsed > 0 else 0
+            # Only show progress for larger datasets or final batch
+            if total_records > 500 and (batch_num % 2 == 0 or batch_end == total_records):
+                print(f"   🔄 Processed batch {batch_num}: {batch_end}/{total_records} records ({rate:.0f} records/sec)")
+            elif batch_end == total_records:
+                print(f"   🔄 Processed batch {batch_num}: {batch_end}/{total_records} records ({rate:.0f} records/sec)")
         
-        # 🔥 PIPELINE PROCESSING TIMING ENDS HERE
+        # Calculate final metrics
         pipeline_processing_time = time.time() - pipeline_processing_start
-        
-        # Calculate final processing metrics
-        processing_metrics['total_processing_time'] = pipeline_processing_time
-        processing_metrics['records_per_second'] = total_records / pipeline_processing_time
-        processing_metrics['average_batch_time'] = pipeline_processing_time / processing_metrics['batches_processed']
-        
-        print(f"✅ Spark pipeline processing complete!")
+        records_per_second = total_records / pipeline_processing_time
+        violations_found = sum(1 for record in all_processed_records if record.get('compliance_violations', 0) > 0)
+        num_batches = (total_records + batch_size - 1) // batch_size
+        average_batch_time = pipeline_processing_time / num_batches if num_batches > 0 else pipeline_processing_time
+        print("✅ Spark pipeline processing complete!")
         print(f"   Pipeline processing time: {pipeline_processing_time:.3f}s")
-        print(f"   Processing rate: {processing_metrics['records_per_second']:.0f} records/second")
-        print(f"   Violations found: {processing_metrics['violations_found']}")
+        print(f"   Processing rate: {records_per_second:.0f} records/second")
+        print(f"   Violations found: {violations_found}")
+
+        processing_metrics = {
+            'total_processing_time': pipeline_processing_time,
+            'records_per_second': records_per_second,
+            'average_batch_time': average_batch_time,
+            'batches_processed': num_batches,
+            'violations_found': violations_found,
+            'total_records': total_records
+        }
         
         # ==================== POST-PROCESSING PHASE ====================
         # File saving and result storage - NO processing timing
         post_processing_start = time.time()
         
-        print("💾 Post-Processing: File saving and result storage...")
+        print("💾 Post-Processing: Saving results to CSV...")
         
-        # Convert processed records back to DataFrame for saving (infrastructure)
-        processed_df = self.spark.createDataFrame(all_processed_records)
-        
-        # Save results to file (infrastructure)
-        self.save_results(processed_df, output_file)
+        # Save results directly to CSV (infrastructure only)
+        if all_processed_records:
+            # Get all possible field names from all records
+            fieldnames = set()
+            for record in all_processed_records:
+                fieldnames.update(record.keys())
+            fieldnames = list(fieldnames)
+            
+            # Write to CSV file
+            with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(all_processed_records)
+            
+            print(f"   ✅ Saved {len(all_processed_records)} records to {output_file}")
+        else:
+            print("   ⚠️ No records to save")
         
         post_processing_time = time.time() - post_processing_start
         print(f"   ✅ Post-processing complete: {post_processing_time:.3f}s")
@@ -503,6 +659,9 @@ class SparkBatchProcessor:
                 'post_processing': f"{post_processing_time:.3f}s"
             }
         }
+        
+        # Note: Spark session is kept alive for potential post-processing
+        # The caller is responsible for stopping the session when done
         
         return complete_metrics
     
@@ -548,14 +707,14 @@ class SparkBatchProcessor:
         
         return anonymized
     
-    def start_processing(self, input_file, output_file, anonymization_method="k_anonymity", use_microflow=True):
+    def start_processing(self, input_file, output_file, anonymization_config=None, use_microflow=True):
         """
         Main entry point for batch processing with option for microflow architecture
         
         Args:
             input_file (str): Path to input CSV file
-            output_file (str): Path to output processed file
-            anonymization_method (str): Anonymization method to apply
+            output_file (str): Path to output CSV file
+            anonymization_config (AnonymizationConfig): Configuration for anonymization parameters
             use_microflow (bool): Whether to use microflow architecture (default: True)
             
         Returns:
@@ -564,10 +723,11 @@ class SparkBatchProcessor:
         if use_microflow:
             return self.process_batch_microflow(input_file, output_file, 
                                               batch_size=1000, 
-                                              anonymization_method=anonymization_method)
+                                              anonymization_config=anonymization_config)
         else:
-            # Legacy batch processing (for comparison)
-            return self.process_batch(input_file, output_file, anonymization_method)
+            # Legacy batch processing (for comparison) - convert config to method string
+            method_string = anonymization_config.method.value if anonymization_config else "k_anonymity"
+            return self.process_batch(input_file, output_file, method_string)
     
     def stop_processing(self):
         """
@@ -588,6 +748,36 @@ class SparkBatchProcessor:
         This is important for resource cleanup in Spark applications
         """
         self.stop_processing()
+
+    def apply_schema_types(self, df, detected_schema):
+        """Apply schema type conversions to Spark DataFrame"""
+        try:
+            # Basic type conversions for common fields
+            if 'treatment_date' in df.columns:
+                # Convert treatment_date to timestamp
+                df = df.withColumn('treatment_date', to_timestamp(col('treatment_date')))
+            
+            if 'timestamp' in df.columns:
+                # Ensure timestamp is proper timestamp type
+                df = df.withColumn('timestamp', to_timestamp(col('timestamp')))
+            
+            # Convert boolean fields with proper type handling
+            boolean_fields = ['has_violation', 'has_violations']
+            for field in boolean_fields:
+                if field in df.columns:
+                    # Cast to string first, then apply boolean logic
+                    df = df.withColumn(field, 
+                        when(col(field).cast("string").isin('true', 'True', '1'), True)
+                        .when(col(field).cast("string").isin('false', 'False', '0'), False)
+                        .when(col(field) == 1, True)
+                        .when(col(field) == 0, False)
+                        .otherwise(False)
+                    )
+            
+            return df
+        except Exception as e:
+            print(f"⚠️ Schema type conversion failed: {e}")
+            return df  # Return original DataFrame if conversion fails
 
 def main():
     """

@@ -300,10 +300,11 @@ class SparkBatchProcessor:
 **Features:**
 
 - ✅ **Real Apache Spark** with distributed processing
-- ✅ **K-Anonymity** anonymization with data generalization
+- ✅ **Enhanced Anonymization Engine** with configurable parameters (k-anonymity, differential privacy, tokenization)
+- ✅ **CSV output** with pure pipeline timing for research-grade metrics
 - ✅ **Adaptive Query Execution** for performance optimization
 - ✅ **Schema auto-detection** and validation
-- ✅ **High throughput**: ~0.70 records/second with full compliance
+- ✅ **High throughput**: ~213 records/second with clean timing separation
 
 ### **⚡ Stream Processing (Apache Storm)**
 
@@ -334,11 +335,11 @@ class StormStreamProcessor:
 
 **Features:**
 
-- ✅ **High-speed ingestion** at 5,000+ records/second
-- ✅ **Ultra-low latency** processing (<1ms per record)
-- ✅ **Pure Kafka streaming** with no artificial throttling
-- ✅ **Auto-scaling** with 3 partitions per topic
-- ✅ **Tokenization** anonymization preserving referential integrity
+- ✅ **Enhanced Anonymization Engine** with configurable parameters
+- ✅ **CSV output** with pure pipeline timing for research-grade metrics
+- ✅ **High-speed processing** at ~486 records/second
+- ✅ **Record-by-record processing** with streaming paradigm
+- ✅ **Configurable anonymization** preserving referential integrity
 - ✅ **Immediate violation detection** and response
 
 ### **🧠 Hybrid Processing (Apache Flink)**
@@ -370,12 +371,12 @@ class FlinkHybridProcessor:
 
 **Features:**
 
-- ✅ **High-speed ingestion** at 5,000+ records/second
+- ✅ **Enhanced Anonymization Engine** with configurable parameters
+- ✅ **CSV output** with pure pipeline timing for research-grade metrics
 - ✅ **Intelligent routing** based on data characteristics
 - ✅ **Adaptive processing** combining batch and stream benefits
 - ✅ **Real-time decision engine** with complexity analysis
-- ✅ **Optimized throughput** 3,500+ records/second with routing
-- ✅ **Auto-topic creation** with parallel processing
+- ✅ **Optimized throughput** ~475 records/second with routing intelligence
 
 ## 📋 **Compliance & Security**
 

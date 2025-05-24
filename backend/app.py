@@ -14,6 +14,26 @@ import numpy as np
 from datetime import datetime
 from flask import Flask, jsonify
 from flask_cors import CORS
+from dotenv import load_dotenv
+import logging
+
+# Suppress verbose Kafka and other third-party logging
+logging.getLogger('kafka').setLevel(logging.WARNING)
+logging.getLogger('kafka.conn').setLevel(logging.ERROR)
+logging.getLogger('kafka.coordinator').setLevel(logging.ERROR)
+logging.getLogger('kafka.coordinator.heartbeat').setLevel(logging.ERROR)
+logging.getLogger('kafka.coordinator.consumer').setLevel(logging.ERROR)
+logging.getLogger('kafka.consumer').setLevel(logging.ERROR)
+logging.getLogger('kafka.cluster').setLevel(logging.ERROR)
+logging.getLogger('py4j').setLevel(logging.WARNING)
+logging.getLogger('werkzeug').setLevel(logging.WARNING)
+
+# Configure root logger for clean output
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(levelname)s: %(message)s',
+    handlers=[logging.StreamHandler()]
+)
 
 # Add src to path for imports
 sys.path.append('src')
@@ -44,20 +64,56 @@ def clean_record_for_json(record_dict):
     return cleaned
 
 def create_app():
-    """Application factory pattern"""
     app = Flask(__name__)
     
+    # Load environment variables
+    load_dotenv()
+    
     # Configuration
-    app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
-    app.config['UPLOAD_FOLDER'] = 'data/uploads'
-    app.config['PROCESSED_FOLDER'] = 'data/processed'
+    app.config['DATABASE_URL'] = os.getenv('DATABASE_URL', 'postgresql://admin:password@localhost:5433/compliance_db')
+    app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), 'data', 'uploads')
+    app.config['PROCESSED_FOLDER'] = os.path.join(os.path.dirname(__file__), 'data', 'processed')
     
-    # Enable CORS for React frontend
-    CORS(app)
-    
-    # Ensure upload directories exist
+    # Ensure directories exist
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     os.makedirs(app.config['PROCESSED_FOLDER'], exist_ok=True)
+    
+    # CORS configuration
+    CORS(app, origins=["http://localhost:3007", "http://localhost:3000"])
+    
+    # Initialize database connection
+    global db_connector
+    db_connector = PostgreSQLConnector()
+    
+    # Register blueprints
+    from api.routes.status import bp as status_bp
+    from api.routes.files import bp as files_bp
+    from api.routes.database import bp as database_bp
+    from api.routes.pipeline import bp as pipeline_bp
+    from api.routes.reports import bp as reports_bp
+    from api.routes.compliance import bp as compliance_bp
+    from api.routes.integrity import bp as integrity_bp
+    from api.routes.jobs import bp as jobs_bp
+
+    app.register_blueprint(status_bp)
+    app.register_blueprint(files_bp)
+    app.register_blueprint(database_bp)
+    app.register_blueprint(pipeline_bp)
+    app.register_blueprint(reports_bp)
+    app.register_blueprint(compliance_bp)
+    app.register_blueprint(integrity_bp)
+    app.register_blueprint(jobs_bp)
+    
+    # Initialize optimized streaming if available
+    try:
+        from api.routes.pipeline import stream_manager
+        print("🚀 Initializing streaming...")
+        stream_manager.initialize_static_topics()
+        stream_manager.start_persistent_consumers()
+        print("✅ Streaming ready")
+    except Exception as e:
+        print(f"❌ Streaming init failed: {e}")
+        # Continue without optimized streaming
     
     return app
 

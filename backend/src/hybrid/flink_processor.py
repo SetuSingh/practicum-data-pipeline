@@ -12,7 +12,7 @@ Key Features:
 - Adaptive processing based on volume and complexity
 - Urgent violation handling via stream processing
 - Bulk processing via batch mode for efficiency
-- Comprehensive metrics for research comparison
+- Enhanced Anonymization Engine with configurable parameters
 
 Architecture:
 - Input: Unified data stream from multiple sources
@@ -22,6 +22,7 @@ Architecture:
 """
 import json
 import time
+import csv
 import threading
 from datetime import datetime
 from kafka import KafkaConsumer, KafkaProducer  # Kafka for unified data streaming
@@ -33,6 +34,10 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'common'))
 from compliance_rules import quick_compliance_check, detailed_compliance_check
 from schemas import get_schema_for_data
+
+# Import anonymization components from the unified location to prevent enum identity issues
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+from src.common.anonymization_engine import EnhancedAnonymizationEngine, AnonymizationConfig, AnonymizationMethod
 
 class FlinkHybridProcessor:
     def __init__(self, kafka_servers=['localhost:9093']):
@@ -46,6 +51,9 @@ class FlinkHybridProcessor:
         self.consumer = None                # Kafka consumer for input data
         self.producer = None                # Kafka producer for output data
         self.running = False                # Processing state flag
+        
+        # Initialize Enhanced Anonymization Engine
+        self.anonymization_engine = EnhancedAnonymizationEngine()
         
         # Intelligent routing configuration parameters
         # These thresholds determine when to use batch vs stream processing
@@ -307,9 +315,16 @@ class FlinkHybridProcessor:
         decision['reason'] = 'realtime_processing'
         return decision
     
-    def process_via_stream(self, record):
+    def process_via_stream(self, record, anonymization_config=None):
         """Process record through stream pipeline"""
         start_time = time.time()
+        
+        # Default anonymization config if not provided
+        if anonymization_config is None:
+            anonymization_config = AnonymizationConfig(
+                method=AnonymizationMethod.TOKENIZATION,
+                key_length=256
+            )
         
         # Simple stream processing (similar to Storm processor)
         processed_record = record.copy()
@@ -329,16 +344,17 @@ class FlinkHybridProcessor:
         # Apply anonymization if violations found
         if not compliance_result['compliant']:
             processed_record['anonymized'] = True
-            # Simple tokenization using standardized method
-            processed_record = self.anonymize_data(processed_record, "tokenization")
+            # Use Enhanced Anonymization Engine
+            processed_record = self.anonymization_engine.anonymize_record(processed_record, anonymization_config)
         else:
             processed_record['anonymized'] = False
         
+        # Add anonymization metadata
+        processed_record['anonymization_method'] = anonymization_config.method.value
+        processed_record['anonymization_parameters'] = str(anonymization_config)
+        
         processing_time = time.time() - start_time
         processed_record['processing_time_ms'] = processing_time * 1000
-        
-        # Send to output
-        self.producer.send('hybrid-stream-output', processed_record)
         
         return processed_record, processing_time
     
@@ -481,6 +497,135 @@ class FlinkHybridProcessor:
         finally:
             self.stop()
     
+    def process_file(self, input_file, output_file, anonymization_config=None):
+        """
+        Process a file with hybrid processing approach and CSV output
+        
+        This method implements intelligent routing between stream and batch processing
+        while storing results in memory for CSV output in post-processing.
+        
+        Args:
+            input_file (str): Path to input CSV file
+            output_file (str): Path to output CSV file
+            anonymization_config (AnonymizationConfig): Configuration for anonymization parameters
+            
+        Returns:
+            dict: Complete processing metrics with timing separation
+        """
+        # ==================== PRE-PROCESSING PHASE ====================
+        pre_processing_start = time.time()
+        
+        print("📥 Pre-Processing: File loading and hybrid setup...")
+        
+        # Basic file validation (infrastructure only)
+        if not os.path.exists(input_file):
+            raise FileNotFoundError(f"Input file not found: {input_file}")
+        
+        # Load file data (infrastructure only)
+        records = []
+        with open(input_file, 'r', encoding='utf-8') as file:
+            reader = csv.DictReader(file)
+            records = list(reader)
+        
+        total_records = len(records)
+        processed_records = []
+        routing_stats = {'stream': 0, 'batch': 0}
+        
+        pre_processing_time = time.time() - pre_processing_start
+        print(f"   ✅ Pre-processing complete: {pre_processing_time:.3f}s")
+        
+        # ==================== PIPELINE PROCESSING PHASE ====================
+        print("⚡ Starting intelligent hybrid routing...")
+        
+        # 🔥 PIPELINE PROCESSING TIMING STARTS HERE
+        pipeline_processing_start = time.time()
+        
+        processed_records = []
+        routing_stats = {'stream': 0, 'batch': 0}
+        
+        # Process each record with intelligent routing
+        for i, record in enumerate(records):
+            # 🔥 PURE PROCESSING: Intelligent routing decision
+            routing_decision = self.make_routing_decision(record, self.analyze_data_characteristics(record))
+            
+            # 🔥 PURE PROCESSING: Process based on route
+            if routing_decision['route'] == 'batch':
+                # Pure batch processing (no Kafka overhead)
+                processed_record = self.process_record_as_batch(record, anonymization_config)
+                processed_record['route'] = 'batch'
+            else:
+                # Pure stream processing (no Kafka overhead)  
+                processed_record, _ = self.process_via_stream(record, anonymization_config)
+                processed_record['route'] = 'stream'
+            
+            # 🔥 PURE PROCESSING: Add routing metadata
+            processed_record['routing_decision'] = routing_decision
+            processed_record['processing_method'] = 'hybrid'
+            
+            processed_records.append(processed_record)
+            routing_stats[routing_decision['route']] += 1
+            
+            # Reduced verbosity - progress every 500 records
+            if (i + 1) % 500 == 0:
+                elapsed = time.time() - pipeline_processing_start
+                rate = (i + 1) / elapsed if elapsed > 0 else 0
+                batch_count = routing_stats['batch']
+                stream_count = routing_stats['stream'] 
+                print(f"      🔄 Processed {i + 1} records (B:{batch_count}, S:{stream_count}) ({rate:.0f} records/sec)")
+        
+        # 🔥 PIPELINE PROCESSING TIMING ENDS HERE
+        pipeline_processing_time = time.time() - pipeline_processing_start
+        
+        violations_found = sum(1 for record in processed_records if record.get('has_violations', False))
+        records_per_second = total_records / pipeline_processing_time
+        
+        print(f"   ✅ Hybrid processing completed: {total_records} records")
+        print(f"      🎯 Routing: {routing_stats['batch']} → batch, {routing_stats['stream']} → stream")
+        
+        # ==================== POST-PROCESSING PHASE ====================
+        post_processing_start = time.time()
+        
+        print("💾 Post-Processing: Saving results to CSV...")
+        
+        # Save results directly to CSV (infrastructure only)
+        if processed_records:
+            # Get field names from first record
+            fieldnames = list(processed_records[0].keys())
+            
+            # Write to CSV file
+            with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(processed_records)
+            
+            print(f"   ✅ Saved {len(processed_records)} records to {output_file}")
+        else:
+            print("   ⚠️ No records to save")
+        
+        post_processing_time = time.time() - post_processing_start
+        print(f"   ✅ Post-processing complete: {post_processing_time:.3f}s")
+        
+        # ==================== FINAL METRICS ====================
+        return {
+            'processing_approach': 'hybrid',
+            'pre_processing_time': pre_processing_time,
+            'pure_processing_time': pipeline_processing_time,
+            'post_processing_time': post_processing_time,
+            'total_execution_time': pre_processing_time + pipeline_processing_time + post_processing_time,
+            'processing_metrics': {
+                'total_records': total_records,
+                'records_per_second': records_per_second,
+                'violations_found': violations_found,
+                'routing_stats': routing_stats,
+                'anonymization_config': anonymization_config
+            },
+            'timing_separation': {
+                'pre_processing': f"{pre_processing_time:.3f}s",
+                'pure_processing': f"{pipeline_processing_time:.3f}s",
+                'post_processing': f"{post_processing_time:.3f}s"
+            }
+        }
+
     def start_processing(self):
         """
         Start processing (standardized method name)
@@ -493,7 +638,8 @@ class FlinkHybridProcessor:
     def periodic_batch_processing(self):
         """Periodically process batch buffer even if not full"""
         while self.running:
-            time.sleep(30)  # Process batch every 30 seconds
+            # Process immediately when buffer has data, check every 100ms for efficiency
+            time.sleep(0.1)
             if self.batch_buffer:
                 batch_results, processing_time, batch_violations = self.process_batch_buffer()
                 self.metrics['violations_detected'] += batch_violations
@@ -525,7 +671,11 @@ class FlinkHybridProcessor:
             self.producer.close()
         
         # Print final metrics
-        total_time = time.time() - self.metrics['start_time']
+        if self.metrics.get('start_time') is not None:
+            total_time = time.time() - self.metrics['start_time']
+        else:
+            print('❌❌❌❌ No start time found ❌❌❌❌')
+            total_time = 0
         total_records = self.metrics['total_processed']
         
         print("\n=== Hybrid Processing Complete ===")
@@ -534,7 +684,10 @@ class FlinkHybridProcessor:
         print(f"Routed to stream: {self.metrics['routed_to_stream']}")
         print(f"Routed to batch: {self.metrics['routed_to_batch']}")
         print(f"Violations detected: {self.metrics['violations_detected']}")
-        print(f"Overall throughput: {total_records/total_time:.2f} records/second")
+        if total_time > 0:
+            print(f"Overall throughput: {total_records/total_time:.2f} records/second")
+        else:
+            print("Overall throughput: N/A (no processing time recorded)")
         
         # Routing decision analysis
         if self.metrics['routing_decisions']:

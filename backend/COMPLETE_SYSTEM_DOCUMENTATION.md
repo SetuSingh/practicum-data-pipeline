@@ -2,36 +2,36 @@
 
 ## 📋 **EXECUTIVE SUMMARY**
 
-Your data processing pipeline has **evolved from standard processing to a research-optimized microflow architecture** with:
+Your data processing pipeline has **evolved to an enterprise-grade architecture with integrated anonymization** featuring:
 
-- ✅ **Microflow Batch Processing** - 1000-record batches with memory management
-- ✅ **Pure Timing Separation** - No database I/O contamination during processing
-- ✅ **Batch Database Operations** - Single transactions eliminate N × DB overhead
-- ✅ **Clean Research Metrics** - Accurate processing time measurement
-- ✅ **Fault Tolerance** - Checkpoint recovery with progress tracking
+- ✅ **Enhanced Anonymization Engine** - Direct integration with configurable parameters (k-anonymity, differential privacy, tokenization)
+- ✅ **CSV Output Architecture** - Pure pipeline timing with in-memory processing and CSV output in post-processing
+- ✅ **Clean API Integration** - Anonymization parameters passed from frontend through API to processors
+- ✅ **Unified Processor Interface** - All processors accept AnonymizationConfig for consistent operation
+- ✅ **Research-Grade Metrics** - Clean timing separation with optimal performance measurement
 
 ---
 
-## 🏗️ **MICROFLOW ARCHITECTURE OVERVIEW**
+## 🏗️ **ENHANCED ANONYMIZATION ARCHITECTURE OVERVIEW**
 
-### **Research-Optimized Processing Flow**
+### **Enterprise-Grade Processing Flow with Integrated Anonymization**
 
 ```
 Pre-Processing → [🔥 Pure Processing - TIMED] → Post-Processing
      ↓                       ↓                        ↓
-[Data Loading]     [Compliance Checking]       [Database Operations]
-[Setup & Init]     [Anonymization]             [Batch Inserts]
-[Connections]      [Processing Logic]          [Progress Updates]
-[Topic Creation]   [Memory Operations]         [Result Storage]
+[Data Loading]     [Compliance Checking]       [CSV File Output]
+[Setup & Init]     [Enhanced Anonymization]    [Database Operations]
+[Config Validation] [Processing Logic]         [Progress Updates]
+[Path Creation]    [Memory Operations]         [Result Storage]
 ```
 
 ### **Key Architectural Principles**
 
-1. **🔬 Clean Timing Separation**: Database I/O operations moved outside timed sections
-2. **🔄 Microflow Batching**: Process data in 1000-record batches to prevent memory issues
-3. **📊 Batch Operations**: Single database transactions replace individual record inserts
-4. **🛡️ Fault Tolerance**: Checkpoint recovery with progress tracking
-5. **💾 Memory Management**: Bounded memory usage prevents OOM crashes
+1. **🔬 Enhanced Anonymization Engine**: Direct integration with configurable parameters for all three techniques
+2. **🔄 CSV Output Architecture**: In-memory processing with CSV output in post-processing for optimal performance
+3. **📊 Unified Interface**: All processors (Spark, Storm, Flink) accept AnonymizationConfig for consistent operation
+4. **🛡️ API Integration**: Seamless parameter passing from frontend through API to processors
+5. **💾 Clean Timing Separation**: Pure pipeline timing without I/O contamination for research-grade metrics
 
 ---
 

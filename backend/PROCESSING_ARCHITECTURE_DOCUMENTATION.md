@@ -1,12 +1,72 @@
-# Processing Architecture Documentation
+# Enhanced Anonymization Processing Architecture
 
 ## Overview
 
-This document explains the research-optimized processing architecture implemented for clean timing separation and accurate performance metrics. The architecture follows strict uniform boundaries across all processors:
+This document explains the enterprise-grade processing architecture with integrated Enhanced Anonymization Engine. The architecture provides clean timing separation, configurable anonymization parameters, and CSV output for optimal performance:
 
 ```
-Pre-Processing → [Time.start() → Pipeline Processing → Time.end()] → Post-Processing
+Pre-Processing → [Time.start() → Enhanced Pipeline Processing → Time.end()] → Post-Processing
 ```
+
+**Key Enhancement**: All processors now accept `AnonymizationConfig` parameters and output to CSV for pure pipeline timing.
+
+## Enhanced Anonymization Integration
+
+### **Unified AnonymizationConfig Interface**
+
+All processors (Spark, Storm, Flink) now accept the same configuration interface:
+
+```python
+from anonymization_engine import AnonymizationConfig, AnonymizationMethod
+
+# Example configurations
+k_anonymity_config = AnonymizationConfig(
+    method=AnonymizationMethod.K_ANONYMITY,
+    k_value=5
+)
+
+differential_privacy_config = AnonymizationConfig(
+    method=AnonymizationMethod.DIFFERENTIAL_PRIVACY,
+    epsilon=1.0
+)
+
+tokenization_config = AnonymizationConfig(
+    method=AnonymizationMethod.TOKENIZATION,
+    key_length=256
+)
+```
+
+### **Processor Interface Updates**
+
+```python
+# Batch Processor
+processor.process_batch_microflow(
+    input_file=filepath,
+    output_file=output_path,
+    anonymization_config=config  # ← New parameter
+)
+
+# Stream Processor
+processor.process_file(
+    input_file=filepath,
+    output_file=output_path,
+    anonymization_config=config  # ← New parameter
+)
+
+# Hybrid Processor
+processor.process_file(
+    input_file=filepath,
+    output_file=output_path,
+    anonymization_config=config  # ← New parameter
+)
+```
+
+### **CSV Output Architecture**
+
+- **In-Memory Processing**: All processing happens in memory for optimal performance
+- **Post-Processing CSV Output**: Results saved to CSV only after pure processing completes
+- **Clean Timing**: No I/O operations during timed processing sections
+- **Database Operations**: CSV data loaded for database insertion in post-processing
 
 ## Strict Uniform Timing Boundaries
 

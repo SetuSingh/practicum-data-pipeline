@@ -30,6 +30,26 @@ export interface ProcessingJob {
   file_id?: string
   records_processed: number
   compliance_violations: ComplianceViolation[]
+  anonymization_config?: AnonymizationConfig
+}
+
+// Anonymization Types
+export type AnonymizationTechnique = 'k_anonymity' | 'differential_privacy' | 'tokenization'
+
+export interface AnonymizationConfig {
+  technique: AnonymizationTechnique
+  parameters: {
+    k_value?: number
+    epsilon?: number
+    key_size?: number
+  }
+}
+
+export interface AnonymizationParameters {
+  anonymization_technique: AnonymizationTechnique
+  k_value?: number
+  epsilon?: number
+  key_size?: number
 }
 
 export interface ComplianceViolation {
