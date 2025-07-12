@@ -417,11 +417,10 @@ class PipelineOrchestrator:
                     'record_id': f"{job_id}_{idx}",
                     'original_data': record_dict,
                     'processed_data': record_dict,
-                    'compliance_status': record_dict.get('is_compliant', True),
-                    'violation_count': record_dict.get('compliance_violations', 0),
+                    'has_pii': self._has_pii_data(record_dict),
+                    'has_violations': not record_dict.get('is_compliant', True),
                     'violation_types': self._extract_violation_types(record_dict),
-                    'processing_time': datetime.now(),
-                    'anonymization_applied': not record_dict.get('is_compliant', True)
+                    'file_id': None,  # Will be set by the database connector if needed
                 }
                 
                 batch_records.append(record_data)
@@ -459,6 +458,24 @@ class PipelineOrchestrator:
             print(f"   ❌ Batch insert failed: {str(e)}")
             # Don't raise here - we don't want database issues to fail the entire processing
             
+    def _has_pii_data(self, record_dict):
+        """
+        Check if record contains PII (Personally Identifiable Information)
+        
+        Args:
+            record_dict: Record dictionary to check
+            
+        Returns:
+            bool: True if record contains PII
+        """
+        pii_fields = ['ssn', 'phone', 'email', 'patient_name', 'medical_record_number', 
+                     'insurance_id', 'credit_card', 'account_number']
+        
+        for field in pii_fields:
+            if field in record_dict and record_dict[field]:
+                return True
+        return False
+    
     def _extract_violation_types(self, record_dict):
         """
         Extract violation types from record for database storage

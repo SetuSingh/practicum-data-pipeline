@@ -10,7 +10,7 @@ from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 import json
 import hashlib
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, date, timezone
 from typing import Dict, List, Any, Optional, Tuple
 import logging
 from contextlib import contextmanager
@@ -19,6 +19,18 @@ import os
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+def serialize_datetime(obj):
+    """JSON serializer for datetime and date objects"""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, date):
+        return obj.isoformat()
+    raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+
+def safe_json_dumps(data):
+    """Safely serialize data to JSON, handling datetime objects"""
+    return json.dumps(data, default=serialize_datetime)
 
 class PostgreSQLConnector:
     """
@@ -594,8 +606,8 @@ class PostgreSQLConnector:
         query = """
             INSERT INTO data_records (
                 job_id, record_id, original_data, processed_data,
-                compliance_status, violation_count, violation_types,
-                processing_time, anonymization_applied, created_at
+                has_pii, has_violations, violation_types,
+                file_id, record_hash, row_number, created_at
             )
             VALUES %s
             RETURNING id
@@ -603,17 +615,24 @@ class PostgreSQLConnector:
         
         # Prepare values for batch insert
         values = []
-        for record in records:
+        for idx, record in enumerate(records):
+            # Generate record hash from original data
+            import hashlib
+            record_hash = hashlib.sha256(
+                safe_json_dumps(record.get('original_data', {})).encode()
+            ).hexdigest()
+            
             values.append((
                 record.get('job_id'),
                 record.get('record_id'),
-                json.dumps(record.get('original_data', {})),
-                json.dumps(record.get('processed_data', {})),
-                record.get('compliance_status', True),
-                record.get('violation_count', 0),
-                json.dumps(record.get('violation_types', [])),
-                record.get('processing_time', datetime.now()),
-                record.get('anonymization_applied', False),
+                safe_json_dumps(record.get('original_data', {})),
+                safe_json_dumps(record.get('processed_data', {})),
+                record.get('has_pii', False),
+                record.get('has_violations', False),
+                record.get('violation_types', []),
+                record.get('file_id'),
+                record_hash,
+                idx + 1,  # row_number
                 datetime.now()
             ))
         

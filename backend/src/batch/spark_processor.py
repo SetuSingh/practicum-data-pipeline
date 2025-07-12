@@ -13,8 +13,8 @@ Key Features:
 - Performance metrics collection for research comparison
 """
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import *
-from pyspark.sql.types import *
+from pyspark.sql.functions import col, to_timestamp, to_date, when, lit
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, TimestampType, DateType, BooleanType
 import pandas as pd
 import time
 import sys
@@ -101,8 +101,6 @@ class SparkBatchProcessor:
                 
                 # Handle data type conversions before applying strict schema
                 print("🔄 Converting data types to match schema...")
-                from pyspark.sql.functions import col, to_timestamp, to_date
-                from pyspark.sql.types import TimestampType, DateType
                 
                 spark_schema = schema_def.get_spark_schema()
                 for field in spark_schema.fields:
