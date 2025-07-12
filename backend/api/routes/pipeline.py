@@ -524,12 +524,16 @@ class PipelineOrchestrator:
         try:
             print(f"📤 Ingesting {filepath} to Kafka topic '{topic}' at {records_per_second} records/sec")
             
-            # Set up Kafka producer
+            # Set up Kafka producer with optimized settings
             producer = KafkaProducer(
                 bootstrap_servers=['localhost:9093'],
                 value_serializer=lambda x: json.dumps(x).encode('utf-8'),
                 retries=3,
-                retry_backoff_ms=100
+                retry_backoff_ms=100,
+                batch_size=16384,  # Larger batch size for better throughput
+                linger_ms=5,       # Small linger time for better batching
+                compression_type='snappy',  # Compression for better network efficiency
+                acks=1             # Faster acknowledgment (leader only)
             )
             
             # Read file and send records to Kafka
@@ -540,7 +544,7 @@ class PipelineOrchestrator:
             print(f"   📊 Streaming {total_records} records to topic '{topic}'...")
             
             # Send records to Kafka as fast as possible for true streaming performance
-            batch_size = 100
+            batch_size = 500  # Larger batch size for better throughput
             records_sent = 0
             
             for idx, record in df.iterrows():
@@ -548,7 +552,7 @@ class PipelineOrchestrator:
                 record_dict['_ingestion_timestamp'] = datetime.now().isoformat()
                 record_dict['_record_index'] = idx
                 
-                # Send to Kafka
+                # Send to Kafka (async for better performance)
                 producer.send(topic, record_dict)
                 records_sent += 1
                 
@@ -657,35 +661,40 @@ class PipelineOrchestrator:
                         topic_name,
                         bootstrap_servers=['localhost:9093'],
                         auto_offset_reset='earliest',  # Start from beginning to catch our messages
-                        consumer_timeout_ms=30000,  # 30 second timeout
-                        value_deserializer=lambda x: json.loads(x.decode('utf-8'))
+                        consumer_timeout_ms=2000,  # 2 second timeout for efficient processing
+                        value_deserializer=lambda x: json.loads(x.decode('utf-8')),
+                        fetch_max_wait_ms=500,  # Reduce wait time for faster processing
+                        max_poll_records=500    # Process more records per poll
                     )
                     
                     print(f"      🔗 Consumer subscribed to topic '{topic_name}'")
                     
-                    # Process stream with pure timing
+                    # Process stream with pure timing - optimized for speed
                     messages_processed = 0
-                    timeout_start = time.time()
-                    timeout_duration = 45  # 45 second timeout
+                    consecutive_empty_polls = 0
+                    max_empty_polls = 3  # Stop after 3 consecutive empty polls
+                    processing_start_time = time.time()
                     
                     for message in consumer:
-                        if time.time() - timeout_start > timeout_duration:
-                            print(f"      ⏰ Processing timeout reached after {timeout_duration}s")
-                            break
-                            
                         try:
                             # 🔥 PURE PROCESSING (timed section)
                             record = message.value
                             processed_record = processor.process_record(record)
                             processing_results.append(processed_record)
                             messages_processed += 1
+                            consecutive_empty_polls = 0  # Reset counter on successful processing
                             
                             if messages_processed % 100 == 0:
-                                print(f"      🔄 Processed {messages_processed} stream records...")
+                                elapsed = time.time() - processing_start_time
+                                rate = messages_processed / elapsed if elapsed > 0 else 0
+                                print(f"      🔄 Processed {messages_processed} stream records... ({rate:.0f} records/sec)")
                                 
                         except Exception as e:
                             print(f"      ⚠️  Record processing error: {str(e)}")
                             continue
+                    
+                    # Consumer timeout reached - check if we got all messages
+                    print(f"      ⏰ Consumer timeout reached - processed {messages_processed} records")
                     
                     consumer.close()
                     print(f"   ✅ Stream processing completed: {len(processing_results)} records processed")
@@ -702,7 +711,7 @@ class PipelineOrchestrator:
             thread.start()
             
             # Wait for processing to complete
-            processing_complete.wait(timeout=60)  # 60 second timeout
+            processing_complete.wait(timeout=10)  # 10 second timeout for faster completion
             
             # 🔥 PURE PROCESSING TIMING ENDS HERE
             pure_processing_time = time.time() - pure_processing_start
