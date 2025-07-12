@@ -331,7 +331,8 @@ class PipelineOrchestrator:
             
             # Batch insert all records to database (post-processing, not timed)
             print(f"   Batch inserting {len(processed_records)} records to database...")
-            self._batch_insert_records(db_connector, processed_records, job_id)
+            file_id = job_instance.file_id if job_instance and hasattr(job_instance, 'file_id') else None
+            self._batch_insert_records(db_connector, processed_records, job_id, file_id)
             
             # Update job completion status (post-processing, not timed)
             if job_instance:
@@ -388,7 +389,7 @@ class PipelineOrchestrator:
             
             raise e
     
-    def _batch_insert_records(self, db_connector, records, job_id):
+    def _batch_insert_records(self, db_connector, records, job_id, file_id=None):
         """
         Batch insert all processed records to database in a single operation
         
@@ -399,6 +400,7 @@ class PipelineOrchestrator:
             db_connector: Database connector instance
             records: List of processed records to insert
             job_id: Job identifier for tracking
+            file_id: File identifier for the records (required for database)
         """
         print(f"   Preparing batch insert for {len(records)} records...")
         
@@ -420,7 +422,7 @@ class PipelineOrchestrator:
                     'has_pii': self._has_pii_data(record_dict),
                     'has_violations': not record_dict.get('is_compliant', True),
                     'violation_types': self._extract_violation_types(record_dict),
-                    'file_id': None,  # Will be set by the database connector if needed
+                    'file_id': file_id,  # Use the provided file_id
                 }
                 
                 batch_records.append(record_data)
