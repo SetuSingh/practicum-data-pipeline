@@ -926,6 +926,9 @@ class PipelineOrchestrator:
             processing_complete = threading.Event()
             processing_error = None
             
+            # 🔥 PURE PROCESSING TIMING STARTS HERE
+            pure_processing_start = time.time()
+            
             def hybrid_processing_thread():
                 nonlocal processing_error, routing_decisions, batch_routed, stream_routed
                 try:
@@ -1012,6 +1015,9 @@ class PipelineOrchestrator:
             
             # Wait for processing to complete
             processing_complete.wait(timeout=15)  # 15 second timeout for faster completion
+            
+            # 🔥 PURE PROCESSING TIMING ENDS HERE
+            pure_processing_time = time.time() - pure_processing_start
             
             if processing_error:
                 raise Exception(f"Hybrid processing failed: {processing_error}")
@@ -1167,9 +1173,24 @@ class PipelineOrchestrator:
                 job_instance.status = 'completed' if total_records > 0 else 'completed_with_warnings'
                 job_instance.results = metrics
             
-            print(f"✅ REAL Flink hybrid processing completed for job {job_id}")
-            print(f"   📊 Processed {total_records} records through Kafka topic '{topic_name}'")
+            # Calculate processing metrics like stream processing
+            total_records = len(processing_results) if processing_results else 0
+            violations_found = sum(1 for r in processing_results if r.get('has_violations', False)) if processing_results else 0
+            records_per_second = total_records / pure_processing_time if pure_processing_time > 0 else 0
+            
+            # Calculate average latency from stream-routed records
+            stream_latencies = [r.get('stream_latency_ms', 0) for r in processing_results if r.get('stream_latency_ms')]
+            avg_latency_ms = sum(stream_latencies) / len(stream_latencies) if stream_latencies else 0
+            
+            # Add clean metrics output like stream processing
+            print(f"✅ Hybrid processing completed successfully!")
+            print(f"   Pure processing time: {pure_processing_time:.3f}s")
+            print(f"   Processing rate: {records_per_second:.0f} records/second")
+            print(f"   Records processed: {total_records}")
+            print(f"   Violations found: {violations_found}")
+            print(f"   Average latency: {avg_latency_ms:.2f}ms")
             print(f"   🎯 Routing: {batch_routed} → batch, {stream_routed} → stream")
+            
             return metrics
             
         except Exception as e:
