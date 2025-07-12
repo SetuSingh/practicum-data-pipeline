@@ -332,7 +332,9 @@ class PipelineOrchestrator:
             # Batch insert all records to database (post-processing, not timed)
             print(f"   Batch inserting {len(processed_records)} records to database...")
             file_id = job_instance.file_id if job_instance and hasattr(job_instance, 'file_id') else None
-            self._batch_insert_records(db_connector, processed_records, job_id, file_id)
+            # Use db_job_id for database foreign key constraint
+            db_job_id = job_instance.db_job_id if job_instance and hasattr(job_instance, 'db_job_id') else job_id
+            self._batch_insert_records(db_connector, processed_records, db_job_id, file_id)
             
             # Update job completion status (post-processing, not timed)
             if job_instance:
