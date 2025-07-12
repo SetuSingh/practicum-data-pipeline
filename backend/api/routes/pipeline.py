@@ -726,7 +726,10 @@ class PipelineOrchestrator:
             # Batch insert all processed records (post-processing, not timed)
             print(f"   Batch inserting {len(processing_results)} stream records to database...")
             if processing_results:
-                self._batch_insert_stream_records(db_connector, processing_results, job_id)
+                file_id = job_instance.file_id if job_instance and hasattr(job_instance, 'file_id') else None
+                # Use db_job_id for database foreign key constraint
+                db_job_id = job_instance.db_job_id if job_instance and hasattr(job_instance, 'db_job_id') else job_id
+                self._batch_insert_stream_records(db_connector, processing_results, db_job_id, file_id)
             
             # Calculate metrics
             total_records = len(processing_results)
@@ -795,7 +798,7 @@ class PipelineOrchestrator:
             
             raise e
     
-    def _batch_insert_stream_records(self, db_connector, records, job_id):
+    def _batch_insert_stream_records(self, db_connector, records, job_id, file_id=None):
         """
         Batch insert stream processing results to database
         
@@ -806,6 +809,7 @@ class PipelineOrchestrator:
             db_connector: Database connector instance
             records: List of processed stream records
             job_id: Job identifier for tracking
+            file_id: File identifier for the records (required for database)
         """
         print(f"   Preparing batch insert for {len(records)} stream records...")
         
@@ -821,11 +825,10 @@ class PipelineOrchestrator:
                     'record_id': f"{job_id}_stream_{idx}",
                     'original_data': record,
                     'processed_data': record,
-                    'compliance_status': record.get('stream_compliant', True),
-                    'violation_count': len(record.get('stream_violations', [])),
+                    'has_pii': self._has_pii_data(record),
+                    'has_violations': not record.get('stream_compliant', True),
                     'violation_types': [v.get('type', 'unknown') for v in record.get('stream_violations', [])],
-                    'processing_time': datetime.now(),
-                    'anonymization_applied': record.get('anonymization_applied', False)
+                    'file_id': file_id,  # Use the provided file_id
                 }
                 
                 batch_records.append(record_data)
@@ -834,11 +837,12 @@ class PipelineOrchestrator:
                 if record.get('has_violations', False):
                     for violation in record.get('stream_violations', []):
                         violations_batch.append({
-                            'job_id': job_id,
-                            'record_id': f"{job_id}_stream_{idx}",
+                            'file_id': file_id,
+                            'record_id': None,  # Will be set after records are inserted
                             'violation_type': violation.get('type', 'compliance_violation'),
+                            'violation_category': 'data_exposure',
                             'severity': violation.get('severity', 'medium'),
-                            'detected_at': datetime.now(),
+                            'description': violation.get('description', 'Stream processing violation detected'),
                             'details': violation.get('description', '')
                         })
                     
