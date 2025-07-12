@@ -53,10 +53,10 @@ A modern, full-stack data processing system featuring **real Apache Spark**, **S
 - Python 3.8+
 - PostgreSQL (Docker)
 - Java 11+ (for Spark)
+- Docker Desktop
 
 # Optional (for real streaming)
 - Apache Kafka
-- Docker Desktop
 ```
 
 ### **Installation & Setup**
@@ -66,8 +66,8 @@ A modern, full-stack data processing system featuring **real Apache Spark**, **S
 git clone <repository>
 cd practicum
 
-# 2. Start PostgreSQL
-docker-compose up -d postgres
+# 2. Start all services
+docker-compose up -d
 
 # 3. Setup database
 cd backend && python setup/setup_database.py
@@ -149,9 +149,10 @@ practicum/
 │   ├── data/                     # Data storage
 │   │   ├── uploads/              # Uploaded files
 │   │   └── processed/            # Processed outputs
-│   └── requirements.txt          # Python dependencies
+│   ├── requirements.txt          # Python dependencies
+│   └── COMPLETE_SYSTEM_DOCUMENTATION.md # Technical documentation
 ├── 🐳 docker-compose.yml          # PostgreSQL container
-└── 📚 docs/                      # Documentation (TO BE CLEANED)
+└── 📚 docs/                      # Research materials and architecture diagrams
 ```
 
 ## 💡 **How It Works**
@@ -773,29 +774,20 @@ npm install
 ## 📚 **Additional Documentation**
 
 - **[Complete System Documentation](backend/COMPLETE_SYSTEM_DOCUMENTATION.md)** - Comprehensive technical documentation with microflow architecture details
+- **[Processing Architecture Documentation](backend/PROCESSING_ARCHITECTURE_DOCUMENTATION.md)** - Verified performance results and uniform boundaries implementation
 - **[Architecture Diagrams](docs/architecture_diagrams.md)** - Visual system architecture and research-optimized processing flows
-- **[Deployment Guide](DEPLOYMENT_GUIDE.md)** - Production deployment instructions
 
-## 📚 **Documentation to Delete**
+## 📚 **Documentation Structure**
 
-**After reading this README, you can safely delete these outdated files:**
+**Current documentation files:**
 
-```bash
-# Outdated documentation
-rm -rf docs/pipeline_processing_workflow.md
-rm -rf docs/pipeline_processing_workflow_UPDATED.md
-rm -rf docs/data_ingestion_reality_check.md
-rm -rf docs/implementation_setup.md
-rm -rf docs/research_evaluation_framework.md
-
-# Keep only:
-# - backend/COMPLETE_SYSTEM_DOCUMENTATION.md (technical documentation)
-# - docs/architecture_diagrams.md (visual architecture)
-# - docs/README.md (for documentation index)
-# - docs/praticum-details/ (research materials)
-# - docs/related-paper/ (research papers)
-# - This README.md (single source of truth)
-```
+- **README.md** - This file, your single source of truth
+- **backend/COMPLETE_SYSTEM_DOCUMENTATION.md** - Technical documentation
+- **backend/PROCESSING_ARCHITECTURE_DOCUMENTATION.md** - Performance results and uniform boundaries
+- **docs/architecture_diagrams.md** - Visual system architecture
+- **docs/README.md** - Documentation index
+- **docs/praticum-details/** - Research materials for DCU thesis
+- **docs/related-paper/** - Research papers and literature
 
 ## 🎯 **What Actually Works**
 
