@@ -1,0 +1,16 @@
+{
+  "name": "secure-data-pipeline-backend",
+  "version": "1.0.0",
+  "description": "Flask backend for Secure Data Pipeline",
+  "private": true,
+  "scripts": {
+    "dev": "python app.py",
+    "start": "python app.py",
+    "test": "python -m pytest tests/",
+    "setup-db": "python setup/setup_database.py",
+    "generate-demo-data": "python demos/demo_data_integrity.py"
+  },
+  "engines": {
+    "python": ">=3.8"
+  }
+} 

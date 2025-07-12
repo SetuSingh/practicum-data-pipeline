@@ -1,0 +1,89 @@
+WE have research practicum going on and we have couple of research questions and the implementation we are thinking :
+
+
+
+Here it is :
+
+
+
+Dear Professor,
+
+Hope you're doing well! It's been a couple of months since we last connected, and I wanted to update you on our practicum progress and get your thoughts on our direction.
+
+We're working to balance research and implementation effectively and would appreciate your feedback on whether we're on the right track.
+
+Research Question 1: Batch vs Real-time Verification
+
+How do batch verification and real-time automated verification compare in ensuring compliance and detecting violations in data pipelines?
+
+
+
+Research:
+
+Existing data pipelines (batch/stream processing)
+
+Comparative pipeline selection and best practices
+
+GDPR/HIPAA compliance violations for rule sets
+
+Impact of delayed compliance reporting
+
+
+
+Implementation:
+
+Clone/build hybrid pipelines for both processing types
+
+Generate mock datasets with compliance violations
+
+Create rule sets and test with varying data volumes (1GB-50GB+)
+
+Measure detection rates, latency, and resource utilization
+
+
+
+Research Question 2: Anonymization Technique Comparison
+
+Which anonymization technique best balances data utility and privacy: k-anonymity, differential privacy, or tokenization?
+
+
+
+Research:
+
+Evaluation metrics for anonymization algorithms
+
+Comparative analysis of the three techniques
+
+
+
+Implementation:
+
+Implement techniques in our pipeline
+
+Test speed, memory usage, and computational overhead with large datasets
+
+
+
+Synthetic Datasets: Healthcare (HIPAA), Financial (GDPR), IoT sensor data, E-commerce data
+
+Do you think our approach balances research and implementation appropriately? Any suggestions on our direction?
+
+Would love to discuss this further at your convenience.
+
+
+
+Best regards,
+
+
+
+
+
+-----
+
+
+
+Now I need your help finding existing research paper or existing data pipeline for processing batch and stream data .
+
+
+
+And we would ned reasoning as well as to which pipeline we are picking and why and how to set it up and next steps

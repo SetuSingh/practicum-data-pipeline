@@ -1,0 +1,52 @@
+# Core Framework
+Flask==3.0.0
+Flask-CORS==4.0.0
+
+# Database
+psycopg[binary]>=3.1.0
+SQLAlchemy==2.0.23
+
+# Data Processing - Latest Python 3.13 compatible versions
+pandas>=2.2.0
+numpy>=1.26.0
+
+# Big Data Processing
+pyspark==3.5.0
+
+# Streaming & Queue
+kafka-python==2.2.15
+
+# Monitoring & Analytics
+plotly>=5.17.0
+dash>=2.14.0
+
+# Utilities
+python-dotenv==1.0.0
+requests==2.31.0
+
+# Testing
+pytest>=7.4.0
+
+# File Processing
+openpyxl>=3.1.0
+
+# Cache & Performance
+redis>=5.0.0
+
+# Data Validation
+jsonschema>=4.20.0
+
+# Configuration Management
+PyYAML>=6.0.0
+
+# Async Processing
+celery>=5.3.0
+
+# Date/Time
+python-dateutil>=2.8.0
+
+# Development
+ipython>=8.18.0
+
+# Data Generation
+faker>=20.0.0 

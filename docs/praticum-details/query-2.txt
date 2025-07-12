@@ -1,0 +1,1 @@
+Now can you also help me research what would be the scenarios in terms of GDPR HIPPA compliance where list of fields that needs to be anonymized or whatever is required according to compliance and also scenarios to test in terms of compliance in Batch processing and Stream processing .
