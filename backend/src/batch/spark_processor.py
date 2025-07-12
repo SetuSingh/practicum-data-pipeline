@@ -369,16 +369,12 @@ class SparkBatchProcessor:
         Returns:
             dict: Complete processing metrics with separate timing domains
         """
-        print(f"🔄 Starting microflow batch processing (batch_size={batch_size})...")
-        
         # PRE-PROCESSING: Database setup and data loading (not timed)
-        print("📥 Pre-Processing: Loading data and setup...")
         pre_processing_start = time.time()
         
         # Load data outside of timed processing
         df = self.load_data(input_file)
         total_records = df.count()
-        print(f"   Loaded {total_records} records for microflow processing")
         
         # Convert to list of records for microflow processing
         records = df.collect()  # Convert to list of Row objects
@@ -398,22 +394,18 @@ class SparkBatchProcessor:
         }
         
         pre_processing_time = time.time() - pre_processing_start
-        print(f"   Pre-processing completed in {pre_processing_time:.2f} seconds")
         
         # MICROFLOW PROCESSING: Process in batches with pure timing
-        print("⚡ Starting microflow processing batches...")
         
         for batch_start in range(0, total_records, batch_size):
             batch_end = min(batch_start + batch_size, total_records)
             batch_records = records[batch_start:batch_end]
             batch_num = (batch_start // batch_size) + 1
             
-            print(f"   Processing batch {batch_num}: records {batch_start+1}-{batch_end}")
-            
             # 🔥 PURE PROCESSING TIMING STARTS HERE
             pure_processing_start = time.time()
             
-            # Process batch without any database I/O operations
+            # Process batch without any database I/O operations or logging
             batch_results = []
             
             for record in batch_records:
@@ -446,11 +438,8 @@ class SparkBatchProcessor:
             
             # Add processed batch to results (not timed)
             processed_records.extend(batch_results)
-            
-            print(f"   Batch {batch_num} processed in {pure_processing_time:.3f}s ({len(batch_results)} records)")
         
         # POST-PROCESSING: Save results and database operations (not timed)
-        print("💾 Post-Processing: Saving results and database operations...")
         post_processing_start = time.time()
         
         # Convert processed records back to DataFrame for saving

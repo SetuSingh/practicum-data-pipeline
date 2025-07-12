@@ -365,8 +365,6 @@ class FlinkHybridProcessor:
             batch_data = self.batch_buffer.copy()
             self.batch_buffer.clear()
         
-        print(f"Processing batch of {len(batch_data)} records...")
-        
         # Convert to DataFrame for batch processing
         df = pd.DataFrame(batch_data)
         
@@ -394,8 +392,6 @@ class FlinkHybridProcessor:
         batch_results = df.to_dict('records')
         for record in batch_results:
             self.producer.send('hybrid-batch-output', record)
-        
-        print(f"Batch processing complete: {len(batch_results)} records in {processing_time:.2f}s")
         
         return batch_results, processing_time
     
