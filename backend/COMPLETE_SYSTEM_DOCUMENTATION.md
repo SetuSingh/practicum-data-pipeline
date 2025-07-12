@@ -80,7 +80,7 @@ class SparkBatchProcessor:
 ### **Performance Benefits**
 
 - **🔬 Clean Metrics**: Pure processing time without I/O contamination
-- **📊 High Throughput**: 4,200+ records/second processing rate
+- **📊 Verified Performance**: 213-486 records/second with uniform boundaries
 - **💾 Memory Bounded**: 1000-record batches prevent OOM crashes
 - **🛡️ Fault Tolerance**: Checkpoint recovery with progress tracking
 
@@ -326,9 +326,9 @@ class PostgreSQLConnector:
 
 ### **✅ Fully Operational**
 
-- ✅ **Microflow Batch Processing** - 4,200+ records/second with clean timing
-- ✅ **Pure Stream Processing** - 5,000+ records/second with no I/O contamination
-- ✅ **Hybrid Adaptive Processing** - 3,800+ records/second with intelligent routing
+- ✅ **Microflow Batch Processing** - 213 records/second with clean timing
+- ✅ **Pure Stream Processing** - 486 records/second with no I/O contamination
+- ✅ **Hybrid Adaptive Processing** - 475 records/second with intelligent routing
 - ✅ **Batch Database Operations** - Single transactions eliminate overhead
 - ✅ **Clean Research Metrics** - Accurate performance measurement
 - ✅ **Fault Tolerance** - Checkpoint recovery with progress tracking

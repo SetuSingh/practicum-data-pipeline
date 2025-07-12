@@ -357,10 +357,7 @@ class SparkBatchProcessor:
         This method implements the research-optimized architecture:
         Pre-Processing → [Time.start() → Pure Pipeline Processing → Time.end()] → Post-Processing
         
-        All database I/O operations are moved outside the timed processing sections
-        to get pure processing performance metrics for research evaluation.
-        
-        FIXED: Actual processing now happens INSIDE the timed section, not just memory loops
+        FIXED: ALL Spark operations now happen INSIDE the timed section for uniform boundaries
         
         Args:
             input_file (str): Path to input CSV file
@@ -372,21 +369,18 @@ class SparkBatchProcessor:
             dict: Complete processing metrics with separate timing domains
         """
         # ==================== PRE-PROCESSING PHASE ====================
-        # Only file loading and setup - NO actual data processing
+        # ONLY file path validation and basic setup - NO Spark operations
         pre_processing_start = time.time()
         
-        print("📥 Pre-Processing: File loading and setup...")
+        print("📥 Pre-Processing: File validation and basic setup...")
         
-        # Load raw data structure only (no processing)
-        df = self.load_data(input_file)
-        total_records = df.count()
-        
-        # Convert to list for microflow processing (this is just data structure conversion)
-        raw_records = df.collect()  # Get raw data records
+        # Basic file validation (infrastructure only)
+        if not os.path.exists(input_file):
+            raise FileNotFoundError(f"Input file not found: {input_file}")
         
         # Initialize result containers (not timed)
         processing_metrics = {
-            'total_records': total_records,
+            'total_records': 0,  # Will be set during processing
             'batch_size': batch_size,
             'batches_processed': 0,
             'pure_processing_times': [],
@@ -399,10 +393,24 @@ class SparkBatchProcessor:
         pre_processing_time = time.time() - pre_processing_start
         print(f"   ✅ Pre-processing complete: {pre_processing_time:.3f}s")
         
-        # ==================== PURE PROCESSING PHASE ====================
-        # ALL actual processing happens here with clean timing
-        print("⚡ Starting pure microflow processing...")
+        # ==================== PIPELINE PROCESSING PHASE ====================
+        # ALL Spark operations happen here with clean timing
+        print("⚡ Starting pure Spark pipeline processing...")
         
+        # 🔥 PIPELINE PROCESSING TIMING STARTS HERE
+        pipeline_processing_start = time.time()
+        
+        # Step 1: Spark DataFrame loading and schema operations (TIMED)
+        print(f"   📊 Loading data with Spark DataFrame operations...")
+        df = self.load_data(input_file)
+        total_records = df.count()
+        processing_metrics['total_records'] = total_records
+        
+        # Step 2: Convert to records for microflow processing (TIMED)
+        print(f"   🔄 Converting Spark DataFrame to records...")
+        raw_records = df.collect()  # Spark operation - should be timed
+        
+        # Step 3: Microflow batch processing (TIMED)
         all_processed_records = []  # Final results container
         
         # Process in microflow batches
@@ -411,10 +419,7 @@ class SparkBatchProcessor:
             batch_records = raw_records[batch_start:batch_end]
             batch_num = (batch_start // batch_size) + 1
             
-            # 🔥 PURE PROCESSING TIMING STARTS HERE
-            pure_processing_start = time.time()
-            
-            # Process each record in the batch (ACTUAL PROCESSING)
+            # Process each record in the batch (PIPELINE PROCESSING)
             batch_results = []
             batch_violations = 0
             
@@ -422,18 +427,18 @@ class SparkBatchProcessor:
                 # Convert Spark Row to dict for processing
                 record_dict = record.asDict()
                 
-                # Step 1: Compliance checking (REAL PROCESSING)
+                # Step 4a: Compliance checking (PIPELINE PROCESSING)
                 data_type = 'healthcare' if 'patient_name' in record_dict else 'financial'
                 compliance_result = detailed_compliance_check(record_dict, data_type)
                 
-                # Step 2: Anonymization if needed (REAL PROCESSING)
+                # Step 4b: Anonymization if needed (PIPELINE PROCESSING)
                 if not compliance_result['compliant']:
                     anonymized_record = self._apply_anonymization(record_dict, anonymization_method)
                     batch_violations += 1
                 else:
                     anonymized_record = record_dict
                 
-                # Step 3: Add processing metadata (REAL PROCESSING)
+                # Step 4c: Add processing metadata (PIPELINE PROCESSING)
                 anonymized_record['compliance_violations'] = len(compliance_result['violations'])
                 anonymized_record['compliance_details'] = str(compliance_result['violations'])
                 anonymized_record['is_compliant'] = compliance_result['compliant']
@@ -442,30 +447,29 @@ class SparkBatchProcessor:
                 
                 batch_results.append(anonymized_record)
             
-            # 🔥 PURE PROCESSING TIMING ENDS HERE
-            pure_processing_time = time.time() - pure_processing_start
-            
-            # Update metrics (not timed)
-            processing_metrics['pure_processing_times'].append(pure_processing_time)
-            processing_metrics['total_processing_time'] += pure_processing_time
+            # Update metrics (still in pipeline processing)
             processing_metrics['batches_processed'] += 1
             processing_metrics['violations_found'] += batch_violations
             
-            # Add to final results (not timed)
+            # Add to final results (still in pipeline processing)
             all_processed_records.extend(batch_results)
             
-            # Progress reporting (not timed)
+            # Progress reporting (still in pipeline processing)
             if batch_num % 5 == 0 or batch_num == 1:
-                elapsed = processing_metrics['total_processing_time']
+                elapsed = time.time() - pipeline_processing_start
                 rate = len(all_processed_records) / elapsed if elapsed > 0 else 0
                 print(f"   🔄 Processed batch {batch_num}: {len(all_processed_records)}/{total_records} records ({rate:.0f} records/sec)")
         
-        # Calculate final processing metrics
-        processing_metrics['records_per_second'] = total_records / processing_metrics['total_processing_time']
-        processing_metrics['average_batch_time'] = processing_metrics['total_processing_time'] / processing_metrics['batches_processed']
+        # 🔥 PIPELINE PROCESSING TIMING ENDS HERE
+        pipeline_processing_time = time.time() - pipeline_processing_start
         
-        print(f"✅ Pure processing complete!")
-        print(f"   Pure processing time: {processing_metrics['total_processing_time']:.3f}s")
+        # Calculate final processing metrics
+        processing_metrics['total_processing_time'] = pipeline_processing_time
+        processing_metrics['records_per_second'] = total_records / pipeline_processing_time
+        processing_metrics['average_batch_time'] = pipeline_processing_time / processing_metrics['batches_processed']
+        
+        print(f"✅ Spark pipeline processing complete!")
+        print(f"   Pipeline processing time: {pipeline_processing_time:.3f}s")
         print(f"   Processing rate: {processing_metrics['records_per_second']:.0f} records/second")
         print(f"   Violations found: {processing_metrics['violations_found']}")
         
@@ -475,10 +479,10 @@ class SparkBatchProcessor:
         
         print("💾 Post-Processing: File saving and result storage...")
         
-        # Convert processed records back to DataFrame for saving
+        # Convert processed records back to DataFrame for saving (infrastructure)
         processed_df = self.spark.createDataFrame(all_processed_records)
         
-        # Save results to file
+        # Save results to file (infrastructure)
         self.save_results(processed_df, output_file)
         
         post_processing_time = time.time() - post_processing_start
@@ -489,13 +493,13 @@ class SparkBatchProcessor:
         complete_metrics = {
             'processing_approach': 'microflow_batch',
             'pre_processing_time': pre_processing_time,
-            'pure_processing_time': processing_metrics['total_processing_time'],
+            'pure_processing_time': pipeline_processing_time,  # This is now the Spark pipeline time
             'post_processing_time': post_processing_time,
-            'total_execution_time': pre_processing_time + processing_metrics['total_processing_time'] + post_processing_time,
+            'total_execution_time': pre_processing_time + pipeline_processing_time + post_processing_time,
             'processing_metrics': processing_metrics,
             'timing_separation': {
                 'pre_processing': f"{pre_processing_time:.3f}s",
-                'pure_processing': f"{processing_metrics['total_processing_time']:.3f}s",
+                'pure_processing': f"{pipeline_processing_time:.3f}s",
                 'post_processing': f"{post_processing_time:.3f}s"
             }
         }

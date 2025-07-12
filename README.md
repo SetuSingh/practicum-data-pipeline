@@ -575,11 +575,11 @@ HYBRID_CONFIG = {
 
 ### **🔬 Research-Grade Microflow Performance**
 
-| Pipeline            | Throughput         | Latency             | Anonymization | Use Case             |
-| ------------------- | ------------------ | ------------------- | ------------- | -------------------- |
-| **Batch Microflow** | 4,200+ records/sec | 1000-record batches | K-anonymity   | Large datasets       |
-| **Pure Stream**     | 5,000+ records/sec | <1ms                | Tokenization  | Real-time processing |
-| **Hybrid Adaptive** | 3,800+ records/sec | <2ms                | Adaptive      | Mixed workloads      |
+| Pipeline            | Throughput      | Latency             | Anonymization | Use Case             |
+| ------------------- | --------------- | ------------------- | ------------- | -------------------- |
+| **Batch Microflow** | 213 records/sec | 1000-record batches | K-anonymity   | Large datasets       |
+| **Pure Stream**     | 486 records/sec | <1ms                | Tokenization  | Real-time processing |
+| **Hybrid Adaptive** | 475 records/sec | <2ms                | Adaptive      | Mixed workloads      |
 
 ### **🎯 Clean Timing Separation**
 
