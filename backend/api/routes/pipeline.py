@@ -432,11 +432,12 @@ class PipelineOrchestrator:
                 # Collect violations for batch insertion
                 if not record_dict.get('is_compliant', True):
                     violations_batch.append({
-                        'job_id': job_id,
-                        'record_id': f"{job_id}_{idx}",
+                        'file_id': file_id,
+                        'record_id': None,  # Will be set after records are inserted
                         'violation_type': 'compliance_violation',
+                        'violation_category': 'data_exposure',
                         'severity': 'medium',
-                        'detected_at': datetime.now(),
+                        'description': record_dict.get('compliance_details', 'Compliance violation detected during processing'),
                         'details': record_dict.get('compliance_details', '')
                     })
                     

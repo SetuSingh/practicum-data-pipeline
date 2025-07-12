@@ -668,9 +668,9 @@ class PostgreSQLConnector:
             return []
             
         query = """
-            INSERT INTO compliance_violations (
-                job_id, record_id, violation_type, severity,
-                detected_at, details, created_at
+            INSERT INTO data_compliance_violations (
+                file_id, record_id, violation_type, violation_category, 
+                severity, description, created_at
             )
             VALUES %s
             RETURNING id
@@ -680,12 +680,12 @@ class PostgreSQLConnector:
         values = []
         for violation in violations:
             values.append((
-                violation.get('job_id'),
+                violation.get('file_id'),
                 violation.get('record_id'),
-                violation.get('violation_type'),
+                violation.get('violation_type', 'compliance_violation'),
+                violation.get('violation_category', 'data_exposure'),
                 violation.get('severity', 'medium'),
-                violation.get('detected_at', datetime.now()),
-                violation.get('details', ''),
+                violation.get('description', violation.get('details', 'Compliance violation detected')),
                 datetime.now()
             ))
         
