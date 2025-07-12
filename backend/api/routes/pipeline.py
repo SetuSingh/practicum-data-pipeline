@@ -940,19 +940,18 @@ class PipelineOrchestrator:
                         topic_name,
                         bootstrap_servers=['localhost:9093'],
                         auto_offset_reset='earliest',
-                        consumer_timeout_ms=45000,  # 45 second timeout
-                        value_deserializer=lambda x: json.loads(x.decode('utf-8'))
+                        consumer_timeout_ms=2000,  # 2 second timeout for efficient processing
+                        value_deserializer=lambda x: json.loads(x.decode('utf-8')),
+                        fetch_max_wait_ms=500,  # Reduce wait time for faster processing
+                        max_poll_records=500    # Process more records per poll
                     )
                     
                     print(f"      🔗 Consumer subscribed to topic '{topic_name}'")
                     
-                    timeout_start = time.time()
-                    timeout_duration = 90  # 1.5 minute timeout
+                    # Process hybrid stream with optimized timing
+                    processing_start_time = time.time()
                     
                     for message in consumer:
-                        if time.time() - timeout_start > timeout_duration:
-                            print(f"      ⏰ Processing timeout reached after {timeout_duration}s")
-                            break
                             
                         try:
                             record = message.value
@@ -979,8 +978,10 @@ class PipelineOrchestrator:
                                 processing_results.append(processed_record)
                             
                             if len(processing_results) % 25 == 0:
+                                elapsed = time.time() - processing_start_time
+                                rate = len(processing_results) / elapsed if elapsed > 0 else 0
                                 print(f"      🔄 Processed {len(processing_results)} records "
-                                      f"(B:{batch_routed}, S:{stream_routed})")
+                                      f"(B:{batch_routed}, S:{stream_routed}) ({rate:.0f} records/sec)")
                                 
                         except Exception as e:
                             print(f"      ⚠️  Record processing error: {str(e)}")
@@ -1010,7 +1011,7 @@ class PipelineOrchestrator:
                 job_instance.progress = 60
             
             # Wait for processing to complete
-            processing_complete.wait(timeout=150)  # 2.5 minute timeout
+            processing_complete.wait(timeout=15)  # 15 second timeout for faster completion
             
             if processing_error:
                 raise Exception(f"Hybrid processing failed: {processing_error}")
