@@ -28,10 +28,10 @@ class PostgreSQLConnector:
     
     def __init__(self, 
                  host: str = "localhost",
-                 port: int = 5432,
+                 port: int = 5433,
                  database: str = "compliance_db",
-                 username: str = "postgres",
-                 password: str = "postgres"):
+                 username: str = "admin",
+                 password: str = "password"):
         """
         Initialize PostgreSQL connector
         
