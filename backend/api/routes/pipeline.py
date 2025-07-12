@@ -1040,62 +1040,20 @@ class PipelineOrchestrator:
                 
                 print(f"   💾 Saved {total_records} processed records to {output_file}")
                 
-                # Insert processed records into database
+                # Insert processed records into database using BATCH operations
                 if job_instance and hasattr(job_instance, 'file_id') and job_instance.file_id:
                     from app import db_connector
-                    import hashlib
-                    import json
                     
-                    records_inserted = 0
-                    violations_inserted = 0
+                    print(f"   🗄️  Batch inserting {total_records} records to database...")
                     
-                    print(f"   🗄️  Inserting {total_records} records into database...")
+                    # Use the same batch insert method as other processors
+                    file_id = job_instance.file_id if job_instance and hasattr(job_instance, 'file_id') else None
+                    db_job_id = job_instance.db_job_id if job_instance and hasattr(job_instance, 'db_job_id') else job_id
                     
-                    for idx, record in enumerate(processing_results):
-                        try:
-                            # Extract core data (remove processing metadata)
-                            core_data = {k: v for k, v in record.items() 
-                                       if not k.startswith('routing_') and 
-                                       not k.startswith('processed_') and 
-                                       not k.startswith('stream_') and
-                                       k not in ['has_violations', 'job_id', 'routing_decision']}
-                            
-                            # Clean data for JSON serialization
-                            core_data = clean_data_for_json_serialization(core_data)
-                            
-                            # Generate record ID and hash
-                            record_id = f"hybrid_{job_id}_{idx}"
-                            record_hash = hashlib.sha256(
-                                json.dumps(core_data, sort_keys=True).encode()
-                            ).hexdigest()
-                            
-                            # Insert record into database
-                            if db_connector:
-                                data_record_db_id = safe_create_data_record(
-                                    db_connector, idx,
-                                    file_id=job_instance.file_id,
-                                    record_id=record_id,
-                                    original_data=core_data,
-                                    record_hash=record_hash,
-                                    job_id=getattr(job_instance, 'db_job_id', None),
-                                    row_number=idx + 1,
-                                    has_pii=True,  # Hybrid data typically has PII
-                                    has_violations=record.get('has_violations', False),
-                                    violation_types=[],  # Hybrid violations handled differently
-                                    compliance_score=0.8,  # Default score for hybrid processing
-                                    created_by=job_instance.user_id
-                                )
-                                records_inserted += 1
-                                
-                                # Progress update every 100 records
-                                if (idx + 1) % 100 == 0:
-                                    print(f"      📝 Inserted {idx + 1}/{total_records} records into database...")
-                                    
-                        except Exception as record_error:
-                            print(f"      ⚠️  Failed to insert record {idx}: {str(record_error)}")
-                            continue
+                    # Batch insert all records using the standardized method
+                    self._batch_insert_records(db_connector, processing_results, db_job_id, file_id)
                     
-                    print(f"   ✅ Database insertion completed: {records_inserted} records")
+                    print(f"   ✅ Batch database insertion completed")
             
             # Analyze routing patterns first (needed for file status update)
             routing_reasons = [d['reason'] for d in routing_decisions]

@@ -316,11 +316,23 @@ class FlinkHybridProcessor:
         processed_record['processed_via'] = 'stream'
         processed_record['processed_at'] = datetime.now().isoformat()
         
-        # Quick compliance check and anonymization
-        if self.quick_violation_check(record):
+        # Detailed compliance check and anonymization
+        data_type = 'healthcare' if 'patient_name' in record else 'financial'
+        compliance_result = detailed_compliance_check(record, data_type)
+        
+        # Add compliance information
+        processed_record['has_violations'] = not compliance_result['compliant']
+        processed_record['compliance_violations'] = len(compliance_result['violations'])
+        processed_record['compliance_details'] = str(compliance_result['violations'])
+        processed_record['is_compliant'] = compliance_result['compliant']
+        
+        # Apply anonymization if violations found
+        if not compliance_result['compliant']:
             processed_record['anonymized'] = True
             # Simple tokenization using standardized method
             processed_record = self.anonymize_data(processed_record, "tokenization")
+        else:
+            processed_record['anonymized'] = False
         
         processing_time = time.time() - start_time
         processed_record['processing_time_ms'] = processing_time * 1000
@@ -352,7 +364,8 @@ class FlinkHybridProcessor:
             
         # Trigger batch processing if buffer is full
         if len(self.batch_buffer) >= self.routing_config['batch_threshold_records']:
-            self.process_batch_buffer()
+            batch_results, processing_time, batch_violations = self.process_batch_buffer()
+            self.metrics['violations_detected'] += batch_violations
     
     def process_batch_buffer(self):
         """Process accumulated batch buffer"""
@@ -373,17 +386,29 @@ class FlinkHybridProcessor:
         df['processed_at'] = datetime.now().isoformat()
         df['batch_size'] = len(batch_data)
         
-        # Batch compliance checking
+        # Batch compliance checking with detailed analysis
+        total_violations = 0
         for idx, row in df.iterrows():
-            violations = self.quick_violation_check(row.to_dict())
-            df.at[idx, 'has_violations'] = violations
+            record_dict = row.to_dict()
+            data_type = 'healthcare' if 'patient_name' in record_dict else 'financial'
+            compliance_result = detailed_compliance_check(record_dict, data_type)
             
-            if violations:
+            # Add compliance information
+            df.at[idx, 'has_violations'] = not compliance_result['compliant']
+            df.at[idx, 'compliance_violations'] = len(compliance_result['violations'])
+            df.at[idx, 'compliance_details'] = str(compliance_result['violations'])
+            df.at[idx, 'is_compliant'] = compliance_result['compliant']
+            
+            if not compliance_result['compliant']:
+                total_violations += 1
                 # Anonymize violating records using standardized method
-                anonymized_record = self.anonymize_data(row.to_dict(), "tokenization")
+                anonymized_record = self.anonymize_data(record_dict, "tokenization")
                 for field in ['ssn', 'phone', 'email', 'patient_name']:
                     if field in anonymized_record:
                         df.at[idx, field] = anonymized_record[field]
+                df.at[idx, 'anonymized'] = True
+            else:
+                df.at[idx, 'anonymized'] = False
         
         processing_time = time.time() - start_time
         df['processing_time_ms'] = processing_time * 1000
@@ -393,7 +418,7 @@ class FlinkHybridProcessor:
         for record in batch_results:
             self.producer.send('hybrid-batch-output', record)
         
-        return batch_results, processing_time
+        return batch_results, processing_time, total_violations
     
     def start_hybrid_processing(self):
         """Start hybrid processing loop"""
@@ -430,15 +455,17 @@ class FlinkHybridProcessor:
                     if routing_decision['route'] == 'stream':
                         processed_record, processing_time = self.process_via_stream(record)
                         self.metrics['routed_to_stream'] += 1
+                        # Count violations from stream processing
+                        if processed_record.get('has_violations', False):
+                            self.metrics['violations_detected'] += 1
                     
                     elif routing_decision['route'] == 'batch':
                         self.add_to_batch_buffer(record)
                         self.metrics['routed_to_batch'] += 1
+                        # Violations will be counted when batch is processed
                     
                     # Update metrics
                     self.metrics['total_processed'] += 1
-                    if characteristics['has_violations']:
-                        self.metrics['violations_detected'] += 1
                     
                     # Print progress
                     if self.metrics['total_processed'] % 100 == 0:
@@ -468,7 +495,8 @@ class FlinkHybridProcessor:
         while self.running:
             time.sleep(30)  # Process batch every 30 seconds
             if self.batch_buffer:
-                self.process_batch_buffer()
+                batch_results, processing_time, batch_violations = self.process_batch_buffer()
+                self.metrics['violations_detected'] += batch_violations
     
     def print_progress(self):
         """Print processing progress"""
@@ -488,7 +516,8 @@ class FlinkHybridProcessor:
         
         # Process any remaining batch buffer
         if self.batch_buffer:
-            self.process_batch_buffer()
+            batch_results, processing_time, batch_violations = self.process_batch_buffer()
+            self.metrics['violations_detected'] += batch_violations
         
         if self.consumer:
             self.consumer.close()
