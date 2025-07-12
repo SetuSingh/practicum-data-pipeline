@@ -571,6 +571,170 @@ class PostgreSQLConnector:
             self._connection.close()
             logger.info("PostgreSQL connection closed")
 
+    # ============================================================================
+    # BATCH OPERATIONS FOR MICROFLOW ARCHITECTURE
+    # ============================================================================
+    
+    def batch_insert_records(self, records: List[Dict]) -> List[str]:
+        """
+        Batch insert multiple data records in a single transaction
+        
+        This method replaces individual record inserts with a single batch operation
+        to eliminate the N × DB overhead issue identified in the performance analysis.
+        
+        Args:
+            records: List of record dictionaries to insert
+            
+        Returns:
+            List of created record IDs
+        """
+        if not records:
+            return []
+            
+        query = """
+            INSERT INTO data_records (
+                job_id, record_id, original_data, processed_data,
+                compliance_status, violation_count, violation_types,
+                processing_time, anonymization_applied, created_at
+            )
+            VALUES %s
+            RETURNING id
+        """
+        
+        # Prepare values for batch insert
+        values = []
+        for record in records:
+            values.append((
+                record.get('job_id'),
+                record.get('record_id'),
+                json.dumps(record.get('original_data', {})),
+                json.dumps(record.get('processed_data', {})),
+                record.get('compliance_status', True),
+                record.get('violation_count', 0),
+                json.dumps(record.get('violation_types', [])),
+                record.get('processing_time', datetime.now()),
+                record.get('anonymization_applied', False),
+                datetime.now()
+            ))
+        
+        try:
+            with self.get_cursor() as cursor:
+                # Use execute_values for efficient batch insert
+                psycopg2.extras.execute_values(
+                    cursor, query, values,
+                    template=None, page_size=100
+                )
+                # Fetch all returned IDs
+                result = cursor.fetchall()
+                return [row['id'] for row in result]
+                
+        except Exception as e:
+            logger.error(f"Batch insert records failed: {e}")
+            raise
+    
+    def batch_insert_violations(self, violations: List[Dict]) -> List[str]:
+        """
+        Batch insert multiple compliance violations in a single transaction
+        
+        This method replaces individual violation inserts with a single batch operation
+        to improve performance during post-processing phase.
+        
+        Args:
+            violations: List of violation dictionaries to insert
+            
+        Returns:
+            List of created violation IDs
+        """
+        if not violations:
+            return []
+            
+        query = """
+            INSERT INTO compliance_violations (
+                job_id, record_id, violation_type, severity,
+                detected_at, details, created_at
+            )
+            VALUES %s
+            RETURNING id
+        """
+        
+        # Prepare values for batch insert
+        values = []
+        for violation in violations:
+            values.append((
+                violation.get('job_id'),
+                violation.get('record_id'),
+                violation.get('violation_type'),
+                violation.get('severity', 'medium'),
+                violation.get('detected_at', datetime.now()),
+                violation.get('details', ''),
+                datetime.now()
+            ))
+        
+        try:
+            with self.get_cursor() as cursor:
+                # Use execute_values for efficient batch insert
+                psycopg2.extras.execute_values(
+                    cursor, query, values,
+                    template=None, page_size=100
+                )
+                # Fetch all returned IDs
+                result = cursor.fetchall()
+                return [row['id'] for row in result]
+                
+        except Exception as e:
+            logger.error(f"Batch insert violations failed: {e}")
+            raise
+    
+    def batch_update_job_progress(self, job_updates: List[Dict]) -> int:
+        """
+        Batch update job progress for multiple jobs
+        
+        This method allows updating multiple job statuses in a single transaction
+        to reduce database lock contention during processing.
+        
+        Args:
+            job_updates: List of job update dictionaries
+            
+        Returns:
+            Number of rows updated
+        """
+        if not job_updates:
+            return 0
+            
+        query = """
+            UPDATE processing_jobs 
+            SET status = data.status,
+                progress = data.progress,
+                updated_at = NOW()
+            FROM (VALUES %s) AS data(id, status, progress)
+            WHERE processing_jobs.id = data.id::uuid
+        """
+        
+        # Prepare values for batch update
+        values = []
+        for update in job_updates:
+            values.append((
+                update.get('job_id'),
+                update.get('status'),
+                update.get('progress', 0)
+            ))
+        
+        try:
+            with self.get_cursor() as cursor:
+                # Use execute_values for efficient batch update
+                psycopg2.extras.execute_values(
+                    cursor, query, values,
+                    template=None, page_size=100
+                )
+                return cursor.rowcount
+                
+        except Exception as e:
+            logger.error(f"Batch update job progress failed: {e}")
+            raise
+
+# Add alias for backward compatibility
+PostgresConnector = PostgreSQLConnector
+
 # ============================================================================
 # UTILITY FUNCTIONS
 # ============================================================================

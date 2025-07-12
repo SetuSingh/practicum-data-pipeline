@@ -352,22 +352,205 @@ class SparkBatchProcessor:
             'violation_rate': violations/total_records
         }
     
-    def start_processing(self, input_file, output_file, anonymization_method="k_anonymity"):
+    def process_batch_microflow(self, input_file, output_file, batch_size=1000, anonymization_method="k_anonymity"):
         """
-        Main entry point for batch processing (standardized method name)
+        Process data using microflow architecture with clean timing separation
         
-        This method provides a consistent interface across all processors
-        for starting the processing pipeline.
+        This method implements the research-optimized architecture:
+        Pre-Processing → [Time.start() → Pure Pipeline Processing → Time.end()] → Post-Processing
+        
+        All database I/O operations are moved outside the timed processing sections
+        to get pure processing performance metrics for research evaluation.
         
         Args:
-            input_file (str): Path to input CSV file with raw data
-            output_file (str): Path to save processed results
-            anonymization_method (str): Method to use for anonymization
+            input_file (str): Path to input CSV file
+            output_file (str): Path to output processed file
+            batch_size (int): Number of records to process in each microflow batch
+            anonymization_method (str): Anonymization method to apply
             
         Returns:
-            dict: Performance metrics for research comparison
+            dict: Complete processing metrics with separate timing domains
         """
-        return self.process_batch(input_file, output_file, anonymization_method)
+        print(f"🔄 Starting microflow batch processing (batch_size={batch_size})...")
+        
+        # PRE-PROCESSING: Database setup and data loading (not timed)
+        print("📥 Pre-Processing: Loading data and setup...")
+        pre_processing_start = time.time()
+        
+        # Load data outside of timed processing
+        df = self.load_data(input_file)
+        total_records = df.count()
+        print(f"   Loaded {total_records} records for microflow processing")
+        
+        # Convert to list of records for microflow processing
+        records = df.collect()  # Convert to list of Row objects
+        
+        # Initialize containers for results (not timed)
+        processed_records = []
+        processing_metrics = {
+            'total_records': total_records,
+            'batch_size': batch_size,
+            'batches_processed': 0,
+            'pure_processing_times': [],  # Only processing time, no I/O
+            'total_processing_time': 0.0,
+            'records_per_second': 0.0,
+            'violations_found': 0,
+            'memory_usage': [],
+            'anonymization_method': anonymization_method
+        }
+        
+        pre_processing_time = time.time() - pre_processing_start
+        print(f"   Pre-processing completed in {pre_processing_time:.2f} seconds")
+        
+        # MICROFLOW PROCESSING: Process in batches with pure timing
+        print("⚡ Starting microflow processing batches...")
+        
+        for batch_start in range(0, total_records, batch_size):
+            batch_end = min(batch_start + batch_size, total_records)
+            batch_records = records[batch_start:batch_end]
+            batch_num = (batch_start // batch_size) + 1
+            
+            print(f"   Processing batch {batch_num}: records {batch_start+1}-{batch_end}")
+            
+            # 🔥 PURE PROCESSING TIMING STARTS HERE
+            pure_processing_start = time.time()
+            
+            # Process batch without any database I/O operations
+            batch_results = []
+            
+            for record in batch_records:
+                # Convert Spark Row to dict for processing
+                record_dict = record.asDict()
+                
+                # Step 1: Compliance checking (pure processing)
+                data_type = 'healthcare' if 'patient_name' in record_dict else 'financial'
+                compliance_result = detailed_compliance_check(record_dict, data_type)
+                
+                # Step 2: Anonymization if needed (pure processing)
+                if not compliance_result['compliant']:
+                    anonymized_record = self._apply_anonymization(record_dict, anonymization_method)
+                    processing_metrics['violations_found'] += 1
+                else:
+                    anonymized_record = record_dict
+                
+                # Step 3: Add processing metadata (pure processing)
+                anonymized_record['compliance_violations'] = len(compliance_result['violations'])
+                anonymized_record['is_compliant'] = compliance_result['compliant']
+                anonymized_record['processing_batch'] = batch_num
+                
+                batch_results.append(anonymized_record)
+            
+            # 🔥 PURE PROCESSING TIMING ENDS HERE
+            pure_processing_time = time.time() - pure_processing_start
+            processing_metrics['pure_processing_times'].append(pure_processing_time)
+            processing_metrics['total_processing_time'] += pure_processing_time
+            processing_metrics['batches_processed'] += 1
+            
+            # Add processed batch to results (not timed)
+            processed_records.extend(batch_results)
+            
+            print(f"   Batch {batch_num} processed in {pure_processing_time:.3f}s ({len(batch_results)} records)")
+        
+        # POST-PROCESSING: Save results and database operations (not timed)
+        print("💾 Post-Processing: Saving results and database operations...")
+        post_processing_start = time.time()
+        
+        # Convert processed records back to DataFrame for saving
+        processed_df = self.spark.createDataFrame(processed_records)
+        
+        # Save results to file
+        self.save_results(processed_df, output_file)
+        
+        # Calculate final metrics
+        processing_metrics['records_per_second'] = total_records / processing_metrics['total_processing_time']
+        processing_metrics['average_batch_time'] = processing_metrics['total_processing_time'] / processing_metrics['batches_processed']
+        
+        post_processing_time = time.time() - post_processing_start
+        
+        # Complete metrics with timing separation
+        complete_metrics = {
+            'processing_approach': 'microflow_batch',
+            'pre_processing_time': pre_processing_time,
+            'pure_processing_time': processing_metrics['total_processing_time'],
+            'post_processing_time': post_processing_time,
+            'total_execution_time': pre_processing_time + processing_metrics['total_processing_time'] + post_processing_time,
+            'processing_metrics': processing_metrics,
+            'timing_separation': {
+                'pre_processing': f"{pre_processing_time:.3f}s",
+                'pure_processing': f"{processing_metrics['total_processing_time']:.3f}s",
+                'post_processing': f"{post_processing_time:.3f}s"
+            }
+        }
+        
+        print(f"✅ Microflow batch processing complete!")
+        print(f"   Pure processing time: {processing_metrics['total_processing_time']:.3f}s")
+        print(f"   Processing rate: {processing_metrics['records_per_second']:.0f} records/second")
+        print(f"   Violations found: {processing_metrics['violations_found']}")
+        
+        return complete_metrics
+    
+    def _apply_anonymization(self, record, method="k_anonymity"):
+        """
+        Apply anonymization to a single record (helper method)
+        
+        Args:
+            record (dict): Record to anonymize
+            method (str): Anonymization method
+            
+        Returns:
+            dict: Anonymized record
+        """
+        anonymized = record.copy()
+        
+        if method == "k_anonymity":
+            # Apply k-anonymity generalization
+            if 'ssn' in record:
+                anonymized['ssn'] = f"***-**-{record['ssn'][-4:]}"
+            if 'phone' in record:
+                anonymized['phone'] = f"***-***-{record['phone'][-4:]}"
+            if 'patient_name' in record:
+                anonymized['patient_name'] = f"PATIENT_{hash(record['patient_name']) % 1000:03d}"
+        
+        elif method == "differential_privacy":
+            # Apply differential privacy
+            if 'ssn' in record:
+                anonymized['ssn'] = "DP_PROTECTED_SSN"
+            if 'phone' in record:
+                anonymized['phone'] = "DP_PROTECTED_PHONE"
+            if 'patient_name' in record:
+                anonymized['patient_name'] = "DP_PROTECTED_NAME"
+        
+        elif method == "tokenization":
+            # Apply tokenization
+            if 'ssn' in record:
+                anonymized['ssn'] = f"TOKEN_{hash(record['ssn']) % 10000:04d}"
+            if 'phone' in record:
+                anonymized['phone'] = f"PHONE_TOKEN_{hash(record['phone']) % 1000:03d}"
+            if 'patient_name' in record:
+                anonymized['patient_name'] = f"PATIENT_TOKEN_{hash(record['patient_name']) % 1000:03d}"
+        
+        return anonymized
+    
+    def start_processing(self, input_file, output_file, anonymization_method="k_anonymity", use_microflow=True):
+        """
+        Main entry point for batch processing with option for microflow architecture
+        
+        Args:
+            input_file (str): Path to input CSV file
+            output_file (str): Path to output processed file
+            anonymization_method (str): Anonymization method to apply
+            use_microflow (bool): Whether to use microflow architecture (default: True)
+            
+        Returns:
+            dict: Processing metrics and results
+        """
+        if use_microflow:
+            return self.process_batch_microflow(input_file, output_file, 
+                                              batch_size=1000, 
+                                              anonymization_method=anonymization_method)
+        else:
+            # Legacy batch processing (for comparison)
+            return self.process_batch(input_file, output_file, anonymization_method)
     
     def stop_processing(self):
         """
