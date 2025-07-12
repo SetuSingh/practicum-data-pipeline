@@ -21,16 +21,40 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def serialize_datetime(obj):
-    """JSON serializer for datetime and date objects"""
+    """JSON serializer for datetime, date, and NaN objects"""
     if isinstance(obj, datetime):
         return obj.isoformat()
     elif isinstance(obj, date):
         return obj.isoformat()
+    # Handle pandas NaN values
+    elif str(obj).lower() == 'nan':
+        return None
     raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
 
 def safe_json_dumps(data):
-    """Safely serialize data to JSON, handling datetime objects"""
-    return json.dumps(data, default=serialize_datetime)
+    """Safely serialize data to JSON, handling datetime objects and NaN values"""
+    # First clean the data to replace NaN values with None
+    cleaned_data = clean_nan_values(data)
+    return json.dumps(cleaned_data, default=serialize_datetime)
+
+def clean_nan_values(data):
+    """Recursively clean NaN values from data structures"""
+    if isinstance(data, dict):
+        return {key: clean_nan_values(value) for key, value in data.items()}
+    elif isinstance(data, list):
+        return [clean_nan_values(item) for item in data]
+    elif isinstance(data, str) and data.lower() == 'nan':
+        return None
+    elif hasattr(data, '__iter__') and not isinstance(data, (str, bytes)):
+        # Handle other iterable types
+        try:
+            return [clean_nan_values(item) for item in data]
+        except:
+            return str(data) if str(data).lower() != 'nan' else None
+    elif str(data).lower() == 'nan':
+        return None
+    else:
+        return data
 
 class PostgreSQLConnector:
     """
