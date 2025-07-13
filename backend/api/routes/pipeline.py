@@ -604,10 +604,10 @@ class PipelineOrchestrator:
             pre_processing_start = time.time()
             
             # Update job status (pre-processing, not timed)
-            if job_instance:
+        if job_instance:
                 job_instance.status = 'initializing'
-                job_instance.progress = 10
-            
+            job_instance.progress = 10
+        
             # Step 1: Set up Kafka topic for this job
             topic_name = f"temp-stream-{job_id}"
             
@@ -741,7 +741,7 @@ class PipelineOrchestrator:
                 self._batch_insert_stream_records(db_connector, processing_results, db_job_id, file_id)
             
             # Calculate metrics
-            total_records = len(processing_results)
+                total_records = len(processing_results)
             violations_found = sum(1 for r in processing_results if r.get('has_violations', False))
             processing_times = [r.get('pure_processing_time', 0) for r in processing_results]
             avg_processing_time = sum(processing_times) / len(processing_times) if processing_times else 0

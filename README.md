@@ -446,31 +446,31 @@ CREATE INDEX idx_audit_log_created_at ON system_audit_log(created_at);
 POST /api/upload
 Content-Type: multipart/form-data
 {
-  "file": "data.csv",
-  "pipeline": "batch|stream|hybrid",
-  "user_role": "admin|analyst|user"
+"file": "data.csv",
+"pipeline": "batch|stream|hybrid",
+"user_role": "admin|analyst|user"
 }
 
 # System status and health
 GET /api/status
 Response: {
-  "status": "healthy",
-  "files": {"uploaded": 42, "processed": 38},
-  "jobs": {"total": 45, "active": 3, "completed": 42}
+"status": "healthy",
+"files": {"uploaded": 42, "processed": 38},
+"jobs": {"total": 45, "active": 3, "completed": 42}
 }
 
 # Processing job details
 GET /api/jobs
 Response: [
-  {
-    "job_id": "uuid",
-    "filename": "data.csv",
-    "pipeline_type": "batch",
-    "status": "completed",
-    "progress": 100,
-    "records_processed": 10000,
-    "compliance_violations": 156
-  }
+{
+"job_id": "uuid",
+"filename": "data.csv",
+"pipeline_type": "batch",
+"status": "completed",
+"progress": 100,
+"records_processed": 10000,
+"compliance_violations": 156
+}
 ]
 ```
 
@@ -480,27 +480,27 @@ Response: [
 # Direct pipeline processing
 POST /api/pipeline/process
 {
-  "job_id": "uuid",
-  "filepath": "/path/to/file.csv",
-  "pipeline_type": "hybrid"
+"job_id": "uuid",
+"filepath": "/path/to/file.csv",
+"pipeline_type": "hybrid"
 }
 
 # Pipeline status and capabilities
 GET /api/pipeline/processors/status
 Response: {
-  "batch": {"available": true, "type": "SparkBatchProcessor"},
-  "stream": {"available": true, "type": "StormStreamProcessor"},
-  "hybrid": {"available": true, "type": "FlinkHybridProcessor"}
+"batch": {"available": true, "type": "SparkBatchProcessor"},
+"stream": {"available": true, "type": "StormStreamProcessor"},
+"hybrid": {"available": true, "type": "FlinkHybridProcessor"}
 }
 
 # Processing metrics
 GET /api/pipeline/metrics?pipeline_type=batch
 Response: {
-  "processing_time": 45.2,
-  "throughput": 0.70,
-  "total_records": 10000,
-  "violations": 156,
-  "anonymization_method": "k_anonymity"
+"processing_time": 45.2,
+"throughput": 0.70,
+"total_records": 10000,
+"violations": 156,
+"anonymization_method": "k_anonymity"
 }
 ```
 
@@ -510,10 +510,10 @@ Response: {
 # Comprehensive reports
 GET /api/reports/summary
 Response: {
-  "system_statistics": {...},
-  "recent_jobs": [...],
-  "violation_trends": [...],
-  "compliance_summary": {...}
+"system_statistics": {...},
+"recent_jobs": [...],
+"violation_trends": [...],
+"compliance_summary": {...}
 }
 
 # Database operations
