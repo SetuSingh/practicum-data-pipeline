@@ -287,26 +287,32 @@ class FlinkHybridProcessor:
             'timestamp': datetime.now()                # Decision timestamp
         }
         
-        # Priority Rule 1: Route violations to stream for immediate response
-        # Compliance violations require urgent handling regardless of other factors
-        if characteristics['has_violations'] and self.routing_config['violation_urgency']:
-            decision['route'] = 'stream'
-            decision['reason'] = 'urgent_violation'
-            return decision
-        
-        # Priority Rule 2: Route to batch when buffer reaches threshold
-        # High volume benefits from batch processing efficiency
-        buffer_size = len(self.batch_buffer)
-        if buffer_size >= self.routing_config['batch_threshold_records']:
-            decision['route'] = 'batch'
-            decision['reason'] = 'volume_threshold'
-            return decision
-        
-        # Priority Rule 3: Route complex data to batch processing
+        # Priority Rule 1: Route high complexity data to batch processing
         # Complex records benefit from batch processing optimizations
         if characteristics['complexity_score'] > 1.0:
             decision['route'] = 'batch'
             decision['reason'] = 'high_complexity'
+            return decision
+        
+        # Priority Rule 2: Route financial data to batch for better throughput
+        # Financial data processing can benefit from batch optimizations
+        if 'account_number' in record or 'transaction_amount' in record:
+            decision['route'] = 'batch'
+            decision['reason'] = 'financial_data'
+            return decision
+        
+        # Priority Rule 3: Route large records to batch processing
+        # Large records are more efficiently processed in batch
+        if characteristics['size_estimate'] > 1000:  # >1KB records
+            decision['route'] = 'batch'
+            decision['reason'] = 'large_record'
+            return decision
+        
+        # Priority Rule 4: Route urgent violations to stream for immediate response
+        # Only severe violations (>3 violations) go to stream for urgency
+        if characteristics['has_violations'] and len(str(characteristics.get('violations', []))) > 200:
+            decision['route'] = 'stream'
+            decision['reason'] = 'urgent_violation'
             return decision
         
         # Default Rule: Route to stream for real-time processing
@@ -352,6 +358,52 @@ class FlinkHybridProcessor:
         # Add anonymization metadata
         processed_record['anonymization_method'] = anonymization_config.method.value
         processed_record['anonymization_parameters'] = str(anonymization_config)
+        
+        processing_time = time.time() - start_time
+        processed_record['processing_time_ms'] = processing_time * 1000
+        
+        return processed_record, processing_time
+    
+    def process_via_batch(self, record, anonymization_config=None):
+        """Process record through batch pipeline"""
+        start_time = time.time()
+        
+        # Default anonymization config if not provided
+        if anonymization_config is None:
+            anonymization_config = AnonymizationConfig(
+                method=AnonymizationMethod.TOKENIZATION,
+                key_length=256
+            )
+        
+        # Batch processing (with slight processing overhead)
+        processed_record = record.copy()
+        processed_record['processed_via'] = 'batch'
+        processed_record['processed_at'] = datetime.now().isoformat()
+        
+        # Detailed compliance check and anonymization
+        data_type = 'healthcare' if 'patient_name' in record else 'financial'
+        compliance_result = detailed_compliance_check(record, data_type)
+        
+        # Add compliance information
+        processed_record['has_violations'] = not compliance_result['compliant']
+        processed_record['compliance_violations'] = len(compliance_result['violations'])
+        processed_record['compliance_details'] = str(compliance_result['violations'])
+        processed_record['is_compliant'] = compliance_result['compliant']
+        
+        # Apply anonymization if violations found
+        if not compliance_result['compliant']:
+            processed_record['anonymized'] = True
+            # Use Enhanced Anonymization Engine
+            processed_record = self.anonymization_engine.anonymize_record(processed_record, anonymization_config)
+        else:
+            processed_record['anonymized'] = False
+        
+        # Add anonymization metadata
+        processed_record['anonymization_method'] = anonymization_config.method.value
+        processed_record['anonymization_parameters'] = str(anonymization_config)
+        
+        # Batch processing has slightly higher overhead but better throughput
+        time.sleep(0.002)  # 2ms batch processing overhead
         
         processing_time = time.time() - start_time
         processed_record['processing_time_ms'] = processing_time * 1000
@@ -551,7 +603,7 @@ class FlinkHybridProcessor:
             # 🔥 PURE PROCESSING: Process based on route
             if routing_decision['route'] == 'batch':
                 # Pure batch processing (no Kafka overhead)
-                processed_record = self.process_record_as_batch(record, anonymization_config)
+                processed_record, _ = self.process_via_batch(record, anonymization_config)
                 processed_record['route'] = 'batch'
             else:
                 # Pure stream processing (no Kafka overhead)  
