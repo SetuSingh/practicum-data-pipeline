@@ -89,7 +89,7 @@ class OptimizedStreamPipelineAnalyzer:
         """Generate predefined topic names for each dataset type and size"""
         topics = {}
         dataset_types = ['healthcare', 'financial']
-        dataset_sizes = [500, 1000, 2500, 5000, 10000]
+        dataset_sizes = [1000, 2500, 5000, 10000, 20000, 40000, 50000]
         
         for data_type in dataset_types:
             for size in dataset_sizes:
@@ -105,7 +105,7 @@ class OptimizedStreamPipelineAnalyzer:
         # Get all anonymization configurations
         configs = self.config_manager.get_all_configs()
         dataset_types = ['healthcare', 'financial']
-        dataset_sizes = [500, 1000, 2500, 5000, 10000]
+        dataset_sizes = [1000, 2500, 5000, 10000, 20000, 40000, 50000]
         
         for config in configs:
             # Generate consumer group name based on configuration
@@ -397,7 +397,18 @@ class OptimizedStreamPipelineAnalyzer:
             # POST-PROCESSING (not timed for research)
             with TimingUtilities.time_section("post_processing") as post_timer:
                 # Calculate metrics
-                violations_detected = sum(1 for r in processed_records if r.get('has_violations', False))
+                # OPTION A — quick flag-based check (commented out for future debugging)
+                # flag_detected = sum(
+                #     1 for r in processed_records
+                #     if str(r.get('has_violations', '')).lower() == 'true'
+                # )
+
+                # OPTION B — authoritative rule-engine check (active by default)
+                from common.compliance_rules import detailed_compliance_check
+                violations_detected = sum(
+                    1 for r in processed_records
+                    if not detailed_compliance_check(r, dataset_info['type'])['compliant']
+                )
                 final_memory = TimingUtilities.measure_memory_usage()
                 cpu_usage = TimingUtilities.measure_cpu_usage()
                 

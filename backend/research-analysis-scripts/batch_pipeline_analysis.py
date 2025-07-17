@@ -288,8 +288,17 @@ processed_rdd = rdd.map(process_record_distributed)
 # Force execution with collect() - this triggers distributed processing
 processed_records = processed_rdd.collect()
 
-# Count violations from processed results
-violations_detected = sum(1 for record in processed_records if record.get('compliance_violations', 0) > 0)
+# OPTION A — quick flag-based check (commented out for debugging)
+# flag_detected = sum(
+#     1 for r in processed_records
+#     if str(r.get('has_violations', r.get('has_violation', ''))).lower() == 'true'
+# )
+
+# OPTION B — authoritative rule-engine check (active by default)
+violations_detected = sum(
+    1 for r in processed_records
+    if not detailed_compliance_check(r, data_type)['compliant']
+)
 
 end_time = time.time()
 pure_processing_time = end_time - start_time

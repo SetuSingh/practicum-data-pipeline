@@ -63,7 +63,7 @@ class ResearchDataGenerator:
         os.makedirs(test_data_dir, exist_ok=True)
         
         # Dataset sizes for incremental testing
-        dataset_sizes = [500, 1000, 2500, 5000, 10000]
+        dataset_sizes = [1000, 2500, 5000, 10000, 20000, 40000, 50000]
         
         datasets = []
         

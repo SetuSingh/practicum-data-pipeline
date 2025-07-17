@@ -356,7 +356,18 @@ class StreamPipelineAnalyzer:
                 self._cleanup_kafka_topics(topics)
                 
                 # Calculate metrics
-                violations_detected = sum(1 for r in processed_records if r.get('has_violations', False))
+                # OPTION A — quick flag-based check (kept for troubleshooting):
+                # flag_detected = sum(
+                #     1 for r in processed_records
+                #     if str(r.get('has_violations', '')).lower() == 'true'
+                # )
+
+                # OPTION B — authoritative rule-engine check (default)
+                from common.compliance_rules import detailed_compliance_check
+                violations_detected = sum(
+                    1 for r in processed_records
+                    if not detailed_compliance_check(r, dataset_info['type'])['compliant']
+                )
                 final_memory = TimingUtilities.measure_memory_usage()
                 cpu_usage = TimingUtilities.measure_cpu_usage()
                 
