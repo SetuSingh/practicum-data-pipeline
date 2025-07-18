@@ -756,7 +756,7 @@ print("BATCH_RESULT:" + json.dumps(result, default=str))
                 'stream_wall_time': stream_wall_time,
                 'batch_wall_time': batch_wall_time,
                 'kafka_streaming_time': stream_result.get('streaming_time', 0) if stream_result else 0,
-                'subprocess_overhead': max(batch_wall_time - batch_processing_time, 0)
+                'subprocess_overhead_ms': max(batch_wall_time - batch_processing_time, 0) * 1000
             }
             
             # Compile processing results with hybrid-specific metrics
@@ -787,7 +787,7 @@ print("BATCH_RESULT:" + json.dumps(result, default=str))
                 'kafka_streaming_time_ms': timing_results.get('kafka_streaming_time', 0) * 1000,
                 'stream_wall_time_ms': timing_results.get('stream_wall_time', 0) * 1000,
                 'batch_wall_time_ms': timing_results.get('batch_wall_time', 0) * 1000,
-                'subprocess_overhead_ms': timing_results.get('subprocess_overhead', 0) * 1000
+                'subprocess_overhead_ms': timing_results.get('subprocess_overhead_ms', 0)
             }
             
             # Record experiment

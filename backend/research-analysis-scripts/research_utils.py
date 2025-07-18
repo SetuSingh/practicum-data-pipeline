@@ -63,7 +63,7 @@ class ResearchDataGenerator:
         os.makedirs(test_data_dir, exist_ok=True)
         
         # Dataset sizes for incremental testing
-        dataset_sizes = [1000, 2500, 5000, 10000, 20000, 40000, 50000]
+        dataset_sizes = [500, 1000, 2500, 5000, 10000, 20000, 40000, 50000]
         
         datasets = []
         
@@ -378,6 +378,7 @@ class ResearchMetricsCollector:
             'max_latency_ms': latency_defaults['max_latency_ms'],
             'min_latency_ms': latency_defaults['min_latency_ms'],
             'latency_std_ms': latency_defaults['latency_std_ms'],
+            'subprocess_overhead_ms': processing_results.get('subprocess_overhead_ms', 0),
             'e2e_latency_ms': e2e_latency_ms or 0,
             # Hybrid routing metrics (populate if provided, else default 0)
             'router_time_ms': processing_results.get('router_time_ms', 0),

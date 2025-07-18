@@ -94,7 +94,7 @@ class OptimizedStreamPipelineAnalyzer:
         """Generate predefined topic names for each dataset type and size"""
         topics = {}
         dataset_types = ['healthcare', 'financial']
-        dataset_sizes = [1000, 2500, 5000, 10000, 20000, 40000, 50000]
+        dataset_sizes = [500, 1000, 2500, 5000, 10000, 20000, 40000, 50000]
         if self.selected_sizes:
             dataset_sizes = [s for s in dataset_sizes if s in self.selected_sizes]
         
@@ -112,7 +112,7 @@ class OptimizedStreamPipelineAnalyzer:
         # Get all anonymization configurations
         configs = self.config_manager.get_all_configs()
         dataset_types = ['healthcare', 'financial']
-        dataset_sizes = [1000, 2500, 5000, 10000, 20000, 40000, 50000]
+        dataset_sizes = [500, 1000, 2500, 5000, 10000, 20000, 40000, 50000]
         if self.selected_sizes:
             dataset_sizes = [s for s in dataset_sizes if s in self.selected_sizes]
         
@@ -454,7 +454,7 @@ class OptimizedStreamPipelineAnalyzer:
                 'processed_records': len(processed_records),
                 'violations_detected': violations_detected,
                 'violation_rate': violations_detected / total_records if total_records > 0 else 0,
-                'memory_usage_mb': final_memory - initial_memory,
+                'memory_usage_mb': final_memory,
                 'cpu_usage_percent': cpu_usage,
                 'information_loss_score': information_loss,
                 'utility_preservation_score': utility_preservation,
@@ -490,7 +490,8 @@ class OptimizedStreamPipelineAnalyzer:
         return {
             'topics': self.topics,
             'total_topics': len(self.topics),
-            'total_consumer_groups': 110  # 11 configs × 10 datasets
+            'total_consumer_groups': len(self.consumer_groups),
+            'consumer_groups': self.consumer_groups
         }
     
     def analyze_results(self) -> Dict[str, Any]:
