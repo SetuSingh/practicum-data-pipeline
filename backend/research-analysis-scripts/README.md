@@ -6,7 +6,7 @@ This directory contains research analysis scripts that provide **clean, research
 
 ## 📋 **Overview**
 
-The research analysis framework tests **3 pipeline types** × **11 anonymization configurations** × **5 dataset sizes** × **2 data types** = **330 total experiments** to generate comprehensive performance metrics for research publication.
+The research analysis framework tests **3 pipeline types** × **11 anonymization configurations** × **8 dataset sizes** × **2 data types** = **528 total experiments** to generate comprehensive performance metrics for research publication.
 
 ### **🔧 What Gets Tested**
 
@@ -14,7 +14,7 @@ The research analysis framework tests **3 pipeline types** × **11 anonymization
 | ----------------- | --------------------------------------------------------------------------------------------------------- | ---------------------------------- |
 | **Pipelines**     | Batch, Stream, Hybrid                                                                                     | All three processing architectures |
 | **Anonymization** | K-anonymity (k=3,5,10,15)<br/>Differential Privacy (ε=0.1,0.5,1.0,2.0)<br/>Tokenization (128,256,512-bit) | All 11 configurations              |
-| **Dataset Sizes** | 500, 1000, 2500, 5000, 10000                                                                              | Incremental scaling tests          |
+| **Dataset Sizes** | 500, 1000, 2500, 5000, 10000, 20000, 40000, 50000                                                         | Incremental scaling tests          |
 | **Data Types**    | Healthcare (HIPAA), Financial (GDPR)                                                                      | Compliance-specific testing        |
 
 ### **⏱️ Clean Timing Architecture**
@@ -71,7 +71,7 @@ python run_all_research_analysis.py --skip-kafka-check
 ```bash
 # Individual pipeline analysis
 python batch_pipeline_analysis.py    # Batch processing only
-python stream_pipeline_analysis.py   # Stream processing only (requires Kafka)
+python optimized_stream_pipeline_analysis.py   # Optimised Stream processing only (requires Kafka)
 python hybrid_pipeline_analysis.py   # Hybrid processing only (requires Kafka)
 
 # Test utilities
@@ -88,7 +88,7 @@ research-analysis-scripts/
 │   ├── consolidated_research_results.csv     # All experiments consolidated
 │   ├── batch_pipeline_results.csv           # Batch-specific results
 │   ├── stream_pipeline_results.csv          # Stream-specific results
-│   ├── hybrid_pipeline_results.csv          # Hybrid-specific results
+│   ├── hybrid_router_results.csv          # Hybrid-specific results (adaptive router)
 │   ├── pipeline_comparison_report.json      # Comparative analysis
 │   ├── research_summary.md                  # Research findings summary
 │   └── performance_comparison.png           # Performance visualizations
@@ -209,11 +209,11 @@ print(f"Scaling correlation: {correlation.iloc[0,1]:.3f}")
 - **Metrics**: `information_loss_score`, `utility_preservation_score`, `records_per_second`
 - **Analysis**: Compare k-anonymity vs. differential privacy vs. tokenization
 
-### **RQ3: Scaling Characteristics**
+### **RQ3: Hybrid Router Balance**
 
-- **Question**: How do pipeline architectures scale with increasing dataset sizes?
-- **Metrics**: `records_per_second` vs. `dataset_size`
-- **Analysis**: Scaling efficiency across pipeline types
+- **Question**: How effectively does an adaptive hybrid router balance compliance-detection latency, throughput, and privacy/utility trade-offs compared with pure batch and pure stream pipelines?
+- **Metrics**: `e2e_latency_ms`, `records_per_second`, `subprocess_overhead_ms`, `router_time_ms`, `information_loss_score`
+- **Analysis**: Correlate hybrid stream% vs. latency/throughput and compare with batch/stream baselines
 
 ## 🔧 **Advanced Usage**
 
