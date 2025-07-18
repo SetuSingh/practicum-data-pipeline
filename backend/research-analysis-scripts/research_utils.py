@@ -71,6 +71,9 @@ class ResearchDataGenerator:
             # CSV files already exist, so just create metadata for them
             healthcare_file = os.path.join(test_data_dir, f"healthcare_{size}_records.csv")
             financial_file = os.path.join(test_data_dir, f"financial_{size}_records.csv")
+
+            # 📦 E-commerce dataset file path
+            ecommerce_file = os.path.join(test_data_dir, f"ecommerce_{size}_records.csv")
             
             # Check if files exist, if not generate them
             if not os.path.exists(healthcare_file):
@@ -82,6 +85,11 @@ class ResearchDataGenerator:
                 print(f"⚠️  Financial file missing, generating: {financial_file}")
                 financial_data = self._generate_financial_data(size)
                 financial_data.to_csv(financial_file, index=False)
+            
+            if not os.path.exists(ecommerce_file):
+                print(f"⚠️  Ecommerce file missing, generating: {ecommerce_file}")
+                ecommerce_data = self._generate_ecommerce_data(size)
+                ecommerce_data.to_csv(ecommerce_file, index=False)
             
             # COMMENTED OUT: CSV generation logic (kept for future reference)
             # # Generate healthcare dataset
@@ -109,6 +117,14 @@ class ResearchDataGenerator:
                 'file_path': financial_file,
                 'expected_violations': int(size * 0.12),  # ~12% violation rate
                 'description': f'Financial dataset with {size} transaction records'
+            })
+            
+            datasets.append({
+                'type': 'ecommerce',
+                'size': size,
+                'file_path': ecommerce_file,
+                'expected_violations': int(size * 0.10),  # ~10% violation rate
+                'description': f'Ecommerce dataset with {size} consumer buying records'
             })
             
             print(f"✅ Using existing test datasets for size {size} records")
@@ -192,6 +208,52 @@ class ResearchDataGenerator:
                 record['credit_score'] = None
                 record['consent_given'] = True
                 record['data_retention_days'] = self.fake.random_int(min=30, max=2556)  # <7 years = compliant
+                record['has_violation'] = False
+                record['violation_type'] = None
+            
+            data.append(record)
+        
+        return pd.DataFrame(data)
+
+    def _generate_ecommerce_data(self, size: int) -> pd.DataFrame:
+        """Generate e-commerce consumer buying test data with PCI-DSS/GDPR violations"""
+        data = []
+        
+        for i in range(size):
+            unit_price = round(self.fake.random.uniform(5.0, 500.0), 2)
+            quantity = self.fake.random_int(min=1, max=5)
+            total_amount = round(unit_price * quantity, 2)
+            
+            record = {
+                'id': str(uuid.uuid4()),
+                'customer_name': self.fake.name(),
+                'email': self.fake.email(),
+                'age': self.fake.random_int(min=18, max=80),
+                'gender': self.fake.random_element(['M', 'F', 'Other']),
+                'country': self.fake.country(),
+                'product_id': f"SKU{self.fake.random_int(min=100000, max=999999)}",
+                'product_category': self.fake.random_element([
+                    'Electronics', 'Clothing', 'Home', 'Sports', 'Health', 'Books', 'Toys'
+                ]),
+                'unit_price': unit_price,
+                'quantity': quantity,
+                'total_amount': total_amount,
+                'purchase_date': self.fake.date_between(start_date='-1y', end_date='today'),
+                'payment_method': self.fake.random_element(['credit_card', 'paypal', 'apple_pay', 'google_pay']),
+                'created_at': datetime.now().isoformat()
+            }
+            
+            # Add PCI-DSS/GDPR violations to ~10% of records
+            if i < size * 0.10:
+                record['credit_card_number'] = self.fake.credit_card_number()
+                record['credit_card_cvv'] = self.fake.random_int(min=100, max=999)
+                record['consent_given'] = False
+                record['has_violation'] = True
+                record['violation_type'] = 'PCI_DSS_VIOLATION'
+            else:
+                record['credit_card_number'] = None
+                record['credit_card_cvv'] = None
+                record['consent_given'] = True
                 record['has_violation'] = False
                 record['violation_type'] = None
             
