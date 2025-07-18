@@ -93,7 +93,8 @@ class OptimizedStreamPipelineAnalyzer:
     def _generate_predefined_topics(self) -> Dict[str, str]:
         """Generate predefined topic names for each dataset type and size"""
         topics = {}
-        dataset_types = ['healthcare', 'financial']
+        # Include all supported dataset types (healthcare, financial, ecommerce)
+        dataset_types = ['healthcare', 'financial', 'ecommerce']
         dataset_sizes = [500, 1000, 2500, 5000, 10000, 20000, 40000, 50000]
         if self.selected_sizes:
             dataset_sizes = [s for s in dataset_sizes if s in self.selected_sizes]
@@ -111,7 +112,8 @@ class OptimizedStreamPipelineAnalyzer:
         
         # Get all anonymization configurations
         configs = self.config_manager.get_all_configs()
-        dataset_types = ['healthcare', 'financial']
+        # Include all supported dataset types for consumer group creation
+        dataset_types = ['healthcare', 'financial', 'ecommerce']
         dataset_sizes = [500, 1000, 2500, 5000, 10000, 20000, 40000, 50000]
         if self.selected_sizes:
             dataset_sizes = [s for s in dataset_sizes if s in self.selected_sizes]
