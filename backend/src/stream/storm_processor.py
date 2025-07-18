@@ -9,7 +9,7 @@ of individual records with immediate violation detection and response.
 Key Features:
 - Real-time streaming data processing (Apache Storm topology with Kafka)
 - Immediate HIPAA/GDPR compliance violation detection
-- Real-time tokenization for privacy protection
+- Enhanced Anonymization Engine with configurable parameters
 - Low-latency metrics collection for research comparison
 - Pure Kafka-based message streaming architecture
 
@@ -22,6 +22,7 @@ REQUIRES: Kafka must be running and accessible - no fallback mode
 """
 import json
 import time
+import csv
 from datetime import datetime
 from kafka import KafkaConsumer, KafkaProducer  # Kafka for streaming message processing
 import threading
@@ -32,6 +33,10 @@ import os
 # Import our modular components
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'common'))
 from compliance_rules import quick_compliance_check, detailed_compliance_check
+
+# Import anonymization components from the unified location to prevent enum identity issues
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+from src.common.anonymization_engine import EnhancedAnonymizationEngine, AnonymizationConfig, AnonymizationMethod
 
 class StormStreamProcessor:
     def __init__(self, kafka_servers=['localhost:9093']):
@@ -46,12 +51,18 @@ class StormStreamProcessor:
         self.producer = None                # Kafka producer for output streams
         self.running = False                # Processing state flag
         
+        # Initialize Enhanced Anonymization Engine
+        self.anonymization_engine = EnhancedAnonymizationEngine()
+        
         # Metrics collection for research evaluation and comparison
         self.metrics = {
             'processed_records': 0,     # Total records processed
             'violations_detected': 0,   # Number of compliance violations found
             'start_time': None,         # Processing start timestamp
-            'processing_times': []      # Individual record processing times for latency analysis
+            'processing_times': [],
+            # Individual record processing times for latency analysis
+            'compliance_overhead': 0,
+            'anonymization_overhead': 0
         }
     
     def setup_kafka(self):
@@ -217,20 +228,21 @@ class StormStreamProcessor:
         """
         return self.anonymize_realtime(record, method)
     
-    def process_record(self, record):
+    def process_record(self, record, anonymization_config):
         """
-        Process a single streaming record with pure timing separation
+        Process a single record through the stream pipeline with accurate timing.
         
-        This method implements the research-optimized architecture for streaming:
-        - Pure processing timing without database I/O contamination
-        - Collect results in memory for post-processing batch operations
-        - Maintain streaming paradigm while ensuring clean metrics
+        This method handles the core streaming logic:
+        1. Real-time compliance checking
+        2. Conditional anonymization (only for violated records)
+        3. Metadata addition
         
         Args:
             record (dict): Single data record from the stream
+            anonymization_config (AnonymizationConfig): Configuration for anonymization
             
         Returns:
-            dict: Processed record with timing metadata
+            dict: Processed and potentially anonymized record
         """
         # 🔥 PURE PROCESSING TIMING STARTS HERE
         pure_processing_start = time.time()
@@ -238,8 +250,10 @@ class StormStreamProcessor:
         # Step 1: Add processing metadata for tracking (pure processing)
         record['stream_processed_at'] = datetime.now().isoformat()
         
-        # Step 2: Perform real-time compliance checking (pure processing)
+        # Step 2: Perform real-time compliance checking (pure processing) with timing
+        comp_start = time.time()
         violations = self.check_compliance_realtime(record)
+        comp_time = time.time() - comp_start
         record['stream_violations'] = violations            # List of violations found
         record['stream_compliant'] = len(violations) == 0   # Boolean compliance status
         record['has_violations'] = len(violations) > 0      # Standard violation flag
@@ -247,13 +261,18 @@ class StormStreamProcessor:
         # Step 3: Apply anonymization for records with violations (pure processing)
         # Only anonymize when violations are detected to preserve data utility
         if violations:
-            anonymized_record = self.anonymize_realtime(record, "tokenization")
+            anon_start = time.time()
+            anonymized_record = self.anonymization_engine.anonymize_record(record, anonymization_config)
+            anon_time = time.time() - anon_start
         else:
             anonymized_record = record  # Keep compliant records unchanged
+            anon_time = 0
         
         # Step 4: Add processing metadata (pure processing)
         anonymized_record['processing_method'] = 'stream'
         anonymized_record['anonymization_applied'] = len(violations) > 0
+        anonymized_record['anonymization_method'] = anonymization_config.method.value
+        anonymized_record['anonymization_parameters'] = str(anonymization_config)
         
         # 🔥 PURE PROCESSING TIMING ENDS HERE
         pure_processing_time = time.time() - pure_processing_start
@@ -263,10 +282,19 @@ class StormStreamProcessor:
         
         # Update metrics (not part of processing timing)
         self.metrics['processed_records'] += 1
+        # FIX: Store actual processing duration, not epoch timestamp
         self.metrics['processing_times'].append(pure_processing_time)
         
         if len(violations) > 0:
             self.metrics['violations_detected'] += 1
+        
+        # Store overhead timings
+        anonymized_record['compliance_time'] = comp_time
+        anonymized_record['anonymization_time'] = anon_time
+
+        # Accumulate processor-level overhead metrics
+        self.metrics['compliance_overhead'] += comp_time
+        self.metrics['anonymization_overhead'] += anon_time
         
         return anonymized_record
     
@@ -317,6 +345,115 @@ class StormStreamProcessor:
             record = message.value
             processed_record = self.process_record(record)
     
+    def process_file(self, input_file, output_file, anonymization_config=None):
+        """
+        Process a file with stream processing approach and CSV output
+        
+        This method simulates streaming by processing records individually
+        while storing results in memory for CSV output in post-processing.
+        
+        Args:
+            input_file (str): Path to input CSV file
+            output_file (str): Path to output CSV file
+            anonymization_config (AnonymizationConfig): Configuration for anonymization parameters
+            
+        Returns:
+            dict: Complete processing metrics with timing separation
+        """
+        # ==================== PRE-PROCESSING PHASE ====================
+        pre_processing_start = time.time()
+        
+        print("📥 Pre-Processing: File loading and stream setup...")
+        
+        # Basic file validation (infrastructure only)
+        if not os.path.exists(input_file):
+            raise FileNotFoundError(f"Input file not found: {input_file}")
+        
+        # Load file data (infrastructure only)
+        records = []
+        with open(input_file, 'r', encoding='utf-8') as file:
+            reader = csv.DictReader(file)
+            records = list(reader)
+        
+        total_records = len(records)
+        processed_records = []
+        
+        pre_processing_time = time.time() - pre_processing_start
+        print(f"   ✅ Pre-processing complete: {pre_processing_time:.3f}s")
+        
+        # ==================== PIPELINE PROCESSING PHASE ====================
+        print("⚡ Starting pure stream processing...")
+        
+        # 🔥 PIPELINE PROCESSING TIMING STARTS HERE
+        pipeline_processing_start = time.time()
+        
+        # Process each record individually (streaming paradigm)
+        for i, record in enumerate(records):
+            processed_record = self.process_record(record, anonymization_config)
+            processed_records.append(processed_record)
+            
+            # Progress reporting
+            if (i + 1) % 100 == 0 or i == 0:
+                elapsed = time.time() - pipeline_processing_start
+                rate = (i + 1) / elapsed if elapsed > 0 else 0
+                # Only print every 200 records to reduce verbosity
+                if (i + 1) % 500 == 0:
+                    print(f"   🔄 Processed {i + 1}/{total_records} records ({rate:.0f} rec/sec)")
+        
+        # 🔥 PIPELINE PROCESSING TIMING ENDS HERE
+        pipeline_processing_time = time.time() - pipeline_processing_start
+        
+        violations_found = sum(1 for record in processed_records if record.get('has_violations', False))
+        records_per_second = total_records / pipeline_processing_time
+        
+        print(f"✅ Stream processing complete!")
+        print(f"   Pipeline processing time: {pipeline_processing_time:.3f}s")
+        print(f"   Processing rate: {records_per_second:.0f} records/second")
+        print(f"   Violations found: {violations_found}")
+        
+        # ==================== POST-PROCESSING PHASE ====================
+        post_processing_start = time.time()
+        
+        print("💾 Post-Processing: Saving results to CSV...")
+        
+        # Save results directly to CSV (infrastructure only)
+        if processed_records:
+            # Get field names from first record
+            fieldnames = list(processed_records[0].keys())
+            
+            # Write to CSV file
+            with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(processed_records)
+            
+            print(f"   ✅ Saved {len(processed_records)} records to {output_file}")
+        else:
+            print("   ⚠️ No records to save")
+        
+        post_processing_time = time.time() - post_processing_start
+        print(f"   ✅ Post-processing complete: {post_processing_time:.3f}s")
+        
+        # ==================== FINAL METRICS ====================
+        return {
+            'processing_approach': 'stream',
+            'pre_processing_time': pre_processing_time,
+            'pure_processing_time': pipeline_processing_time,
+            'post_processing_time': post_processing_time,
+            'total_execution_time': pre_processing_time + pipeline_processing_time + post_processing_time,
+            'processing_metrics': {
+                'total_records': total_records,
+                'records_per_second': records_per_second,
+                'violations_found': violations_found,
+                'anonymization_config': anonymization_config
+            },
+            'timing_separation': {
+                'pre_processing': f"{pre_processing_time:.3f}s",
+                'pure_processing': f"{pipeline_processing_time:.3f}s",
+                'post_processing': f"{post_processing_time:.3f}s"
+            }
+        }
+
     def start_processing(self):
         """
         Start processing (standardized method name)
@@ -341,20 +478,28 @@ class StormStreamProcessor:
         if self.producer:
             self.producer.close()
         
-        # Calculate final performance metrics for research analysis
-        total_time = time.time() - self.metrics['start_time']
+        # Calculate final metrics for research comparison
+        pipeline_processing_time = time.time() - self.metrics['start_time']
+        total_time = pipeline_processing_time
+        records_per_second = self.metrics['processed_records'] / total_time if total_time > 0 else 0
+        
+        # Calculate violations from processed data
+        violations_found = sum(1 for record in processed_records if record.get('has_violations', False))
+        
+        if not processed_records:
+            total_time = 0
         throughput = self.metrics['processed_records'] / total_time if total_time > 0 else 0
         violation_rate = (self.metrics['violations_detected'] / self.metrics['processed_records'] * 100) if self.metrics['processed_records'] > 0 else 0
-        avg_processing_time = sum(self.metrics['processing_times']) / len(self.metrics['processing_times']) if self.metrics['processing_times'] else 0
+        # FIX: Calculate average latency correctly (already in seconds, convert to ms)
+        avg_latency_ms = (sum(self.metrics['processing_times']) / len(self.metrics['processing_times']) * 1000) if self.metrics['processing_times'] else 0
         
-        # Display comprehensive results for research comparison
-        print("\n=== Pure Kafka Stream Processing Complete ===")
-        print(f"Total processing time: {total_time:.2f} seconds")
-        print(f"Records processed: {self.metrics['processed_records']}")
-        print(f"Violations detected: {self.metrics['violations_detected']}")
-        print(f"Violation rate: {violation_rate:.1f}%")
-        print(f"Throughput: {throughput:.2f} records/second")
-        print(f"Average latency: {avg_processing_time*1000:.2f}ms")
+        # Reduced verbosity - essential metrics only
+        print(f"✅ Stream processing complete!")
+        print(f"   Pure processing time: {total_time:.3f}s")
+        print(f"   Processing rate: {records_per_second:.0f} records/second")
+        print(f"   Records processed: {total_records}")
+        print(f"   Violations found: {violations_found}")
+        print(f"   Average latency: {avg_latency_ms:.2f}ms")
     
     def stop_processing(self):
         """

@@ -142,3 +142,18 @@ research.tex
 
 # Generated documentation
 docs/build/ 
+
+# Research analysis generated files
+backend/research-analysis-scripts/results/
+backend/research-analysis-scripts/test_data/
+backend/research-analysis-scripts/logs/
+backend/research-analysis-scripts/temp/
+backend/rq2_focused_results/
+
+# Generated sample files with timestamps
+backend/src/sample_*.csv
+**/sample_*_*.csv
+
+# Backup files
+backup-*.sql
+*.backup 

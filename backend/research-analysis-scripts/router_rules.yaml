@@ -1,0 +1,57 @@
+# Adaptive Hybrid Router Rules
+# Rules are evaluated top-down; first match wins
+
+rules:
+  - id: urgent_deadline
+    description: "Records with deadline < 1 day go to stream for immediate processing"
+    condition: "record.get('days_to_deadline', 999) < 1"
+    route: stream
+    priority: 1
+
+  - id: high_risk_healthcare
+    description: "High-risk healthcare records require immediate stream processing"
+    condition: "record.get('type') == 'healthcare' and record.get('risk_score', 0) > 0.8"
+    route: stream
+    priority: 2
+
+  - id: high_value_transaction
+    description: "High-value financial transactions need real-time processing"
+    condition: "record.get('type') == 'financial' and record.get('amount', 0) > 10000"
+    route: stream
+    priority: 3
+
+  - id: emergency_flag
+    description: "Emergency flagged records go to stream immediately"
+    condition: "record.get('emergency_flag', '').lower() == 'true' or record.get('priority', '').lower() in ['urgent', 'emergency', 'critical']"
+    route: stream
+    priority: 4
+
+  - id: batch_queue_overload
+    description: "Route to stream when batch queue is overloaded"
+    condition: "context.get('batch_queue_size', 0) > 1000"
+    route: stream
+    priority: 5
+
+  - id: incomplete_data
+    description: "Incomplete records go to batch for enrichment"
+    condition: "not all(field in record and record[field] for field in context.get('required_fields', []))"
+    route: batch
+    priority: 6
+
+  - id: large_record_size
+    description: "Large records benefit from batch processing efficiency"
+    condition: "len(str(record)) > 500"
+    route: batch
+    priority: 7
+
+  - id: default
+    description: "Default routing to batch for efficiency"
+    condition: "True"
+    route: batch
+    priority: 999
+
+# Configuration parameters
+config:
+  batch_size: 500
+  batch_interval: 60 # seconds
+  rule_evaluation_timeout: 0.001 # 1ms timeout per rule

@@ -4,6 +4,7 @@ import { Upload, FileText, Loader2 } from 'lucide-react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { uploadFile } from '@/services/api'
+import type { AnonymizationTechnique, AnonymizationParameters } from '@/types'
 
 interface FileUploaderProps {
   onUploadSuccess?: (jobId: string) => void
@@ -12,11 +13,28 @@ interface FileUploaderProps {
 export function FileUploader({ onUploadSuccess }: FileUploaderProps) {
   const [pipelineType, setPipelineType] = useState('batch')
   const [userRole, setUserRole] = useState('admin')
+  
+  // Anonymization parameters state
+  const [anonymizationTechnique, setAnonymizationTechnique] = useState<AnonymizationTechnique>('k_anonymity')
+  const [kValue, setKValue] = useState(5)
+  const [epsilon, setEpsilon] = useState(1.0)
+  const [keySize, setKeySize] = useState(256)
+  
   const queryClient = useQueryClient()
 
   const uploadMutation = useMutation({
-    mutationFn: ({ file, pipeline, role }: { file: File; pipeline: string; role: string }) =>
-      uploadFile(file, pipeline, role),
+    mutationFn: ({ 
+      file, 
+      pipeline, 
+      role, 
+      anonymizationParams 
+    }: { 
+      file: File; 
+      pipeline: string; 
+      role: string; 
+      anonymizationParams: AnonymizationParameters 
+    }) =>
+      uploadFile(file, pipeline, role, anonymizationParams),
     onSuccess: (data) => {
       toast.success(`File uploaded successfully! Job ID: ${data.job_id}`)
       queryClient.invalidateQueries({ queryKey: ['jobs'] })
@@ -37,7 +55,13 @@ export function FileUploader({ onUploadSuccess }: FileUploaderProps) {
     onDrop: (files) => {
       if (files.length > 0) {
         const file = files[0]
-        uploadMutation.mutate({ file, pipeline: pipelineType, role: userRole })
+        const anonymizationParams: AnonymizationParameters = {
+          anonymization_technique: anonymizationTechnique,
+          k_value: anonymizationTechnique === 'k_anonymity' ? kValue : undefined,
+          epsilon: anonymizationTechnique === 'differential_privacy' ? epsilon : undefined,
+          key_size: anonymizationTechnique === 'tokenization' ? keySize : undefined,
+        }
+        uploadMutation.mutate({ file, pipeline: pipelineType, role: userRole, anonymizationParams })
       }
     },
   })
@@ -79,6 +103,98 @@ export function FileUploader({ onUploadSuccess }: FileUploaderProps) {
             <option value="analyst">Data Analyst</option>
             <option value="user">Regular User</option>
           </select>
+        </div>
+      </div>
+
+      {/* Anonymization Configuration */}
+      <div className="border-t border-gray-200 pt-6 mb-6">
+        <h4 className="text-md font-medium text-gray-900 mb-4">
+          Anonymization Configuration
+        </h4>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="md:col-span-2">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Anonymization Technique
+            </label>
+            <select
+              value={anonymizationTechnique}
+              onChange={(e) => setAnonymizationTechnique(e.target.value as AnonymizationTechnique)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+              disabled={uploadMutation.isPending}
+            >
+              <option value="k_anonymity">K-Anonymity</option>
+              <option value="differential_privacy">Differential Privacy</option>
+              <option value="tokenization">Tokenization</option>
+            </select>
+          </div>
+
+          {/* K-Anonymity Parameters */}
+          {anonymizationTechnique === 'k_anonymity' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                K Value
+              </label>
+              <select
+                value={kValue}
+                onChange={(e) => setKValue(Number(e.target.value))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                disabled={uploadMutation.isPending}
+              >
+                <option value={3}>3</option>
+                <option value={5}>5</option>
+                <option value={10}>10</option>
+                <option value={15}>15</option>
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                Minimum group size for anonymization
+              </p>
+            </div>
+          )}
+
+          {/* Differential Privacy Parameters */}
+          {anonymizationTechnique === 'differential_privacy' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Epsilon (ε)
+              </label>
+              <select
+                value={epsilon}
+                onChange={(e) => setEpsilon(Number(e.target.value))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                disabled={uploadMutation.isPending}
+              >
+                <option value={0.1}>0.1</option>
+                <option value={0.5}>0.5</option>
+                <option value={1.0}>1.0</option>
+                <option value={2.0}>2.0</option>
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                Privacy budget (lower = more private)
+              </p>
+            </div>
+          )}
+
+          {/* Tokenization Parameters */}
+          {anonymizationTechnique === 'tokenization' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Key Size (bits)
+              </label>
+              <select
+                value={keySize}
+                onChange={(e) => setKeySize(Number(e.target.value))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                disabled={uploadMutation.isPending}
+              >
+                <option value={128}>128</option>
+                <option value={256}>256</option>
+                <option value={512}>512</option>
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                Token encryption key length
+              </p>
+            </div>
+          )}
         </div>
       </div>
 

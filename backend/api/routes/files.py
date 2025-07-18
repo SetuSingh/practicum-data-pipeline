@@ -13,6 +13,11 @@ from werkzeug.utils import secure_filename
 from ..models import ProcessingJob
 from ..utils import calculate_file_hash, generate_unique_filename, run_async_task
 
+# Import anonymization configuration classes
+import sys
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+from src.common.anonymization_engine import AnonymizationConfig, AnonymizationMethod
+
 bp = Blueprint('files', __name__)
 
 @bp.route('/upload', methods=['POST'])
@@ -29,6 +34,34 @@ def upload_file():
         file = request.files['file']
         pipeline_type = request.form.get('pipeline', 'batch')
         user_role = request.form.get('user_role', 'admin')
+        
+        # Extract anonymization parameters from form data
+        anonymization_technique = request.form.get('anonymization_technique', 'k_anonymity')
+        k_value = request.form.get('k_value', '5')
+        epsilon = request.form.get('epsilon', '1.0')
+        key_size = request.form.get('key_size', '256')
+        
+        # Create anonymization configuration based on technique
+        try:
+            if anonymization_technique == 'k_anonymity':
+                anonymization_config = AnonymizationConfig(
+                    method=AnonymizationMethod.K_ANONYMITY,
+                    k_value=int(k_value)
+                )
+            elif anonymization_technique == 'differential_privacy':
+                anonymization_config = AnonymizationConfig(
+                    method=AnonymizationMethod.DIFFERENTIAL_PRIVACY,
+                    epsilon=float(epsilon)
+                )
+            elif anonymization_technique == 'tokenization':
+                anonymization_config = AnonymizationConfig(
+                    method=AnonymizationMethod.TOKENIZATION,
+                    key_length=int(key_size)
+                )
+            else:
+                return jsonify({'error': f'Invalid anonymization technique: {anonymization_technique}'}), 400
+        except (ValueError, TypeError) as param_error:
+            return jsonify({'error': f'Invalid anonymization parameters: {str(param_error)}'}), 400
         
         # Map role to actual user ID from database
         user_id = _get_user_id_for_role(db_connector, user_role)
@@ -73,7 +106,7 @@ def upload_file():
         from .pipeline import orchestrator
         def pipeline_process_async():
             try:
-                orchestrator.process_file(job_id, filepath, pipeline_type, processed_folder, job)
+                orchestrator.process_file(job_id, filepath, pipeline_type, processed_folder, anonymization_config, job)
             except Exception as e:
                 job.status = 'failed'
                 job.error = str(e)
@@ -87,6 +120,14 @@ def upload_file():
             'file_id': file_id,
             'filename': unique_filename,
             'pipeline': pipeline_type,
+            'anonymization_config': {
+                'technique': anonymization_technique,
+                'parameters': {
+                    'k_value': int(k_value) if anonymization_technique == 'k_anonymity' else None,
+                    'epsilon': float(epsilon) if anonymization_technique == 'differential_privacy' else None,
+                    'key_size': int(key_size) if anonymization_technique == 'tokenization' else None
+                }
+            },
             'file_size': file_size,
             'file_hash': file_hash
         })
