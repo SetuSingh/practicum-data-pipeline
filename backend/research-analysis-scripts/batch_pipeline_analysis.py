@@ -22,6 +22,7 @@ import numpy as np
 import subprocess
 import json
 from datetime import datetime
+import psutil
 from typing import Dict, List, Any, Optional
 
 # Add PySpark imports for distributed processing
@@ -46,13 +47,21 @@ from research_utils import (
 from src.batch.spark_processor import SparkBatchProcessor
 from src.common.anonymization_engine import AnonymizationConfig, AnonymizationMethod
 from src.common.compliance_rules import ComplianceRuleEngine, detailed_compliance_check
+from src.common.anonymization_engine import EnhancedAnonymizationEngine
+
+# ------------------------------------------------------------
+# Batch Pipeline Analyzer
+# ------------------------------------------------------------
 
 class BatchPipelineAnalyzer:
     """Analyze batch processing pipeline performance with different anonymization configurations"""
     
-    def __init__(self, output_dir: str = "results"):
+    def __init__(self, output_dir: str = "results", selected_sizes: Optional[List[int]] = None):
         self.output_dir = output_dir
         self.results_file = os.path.join(output_dir, "batch_pipeline_results.csv")
+        
+        # Allow caller to restrict which dataset sizes are analysed
+        self.selected_sizes = set(selected_sizes) if selected_sizes else None
         
         # Initialize components
         self.data_generator = ResearchDataGenerator()
@@ -80,6 +89,8 @@ class BatchPipelineAnalyzer:
         # Generate test datasets
         print("\n📁 Generating test datasets...")
         datasets = self.data_generator.generate_test_datasets()
+        if self.selected_sizes:
+            datasets = [d for d in datasets if d['size'] in self.selected_sizes]
         print(f"✅ Generated {len(datasets)} test datasets")
         
         # Get all anonymization configurations
@@ -167,7 +178,7 @@ class BatchPipelineAnalyzer:
                 'key_length': anonymization_config.key_length
             }
             
-            # Create the subprocess script
+            # Create the subprocess script with extra metrics capture (memory/CPU/latency)
             subprocess_script = f"""
 import sys
 import os
@@ -175,6 +186,7 @@ import time
 import pandas as pd
 import json
 from datetime import datetime
+import psutil
 
 # Add PySpark imports for distributed processing
 from pyspark.sql import SparkSession
@@ -190,8 +202,9 @@ from src.common.anonymization_engine import AnonymizationConfig, AnonymizationMe
 from src.common.compliance_rules import detailed_compliance_check
 from src.common.anonymization_engine import EnhancedAnonymizationEngine
 
+# ---------------------------
 # Parse configuration
-import json
+# ---------------------------
 config_data = json.loads('''{json.dumps(config_data)}''')
 dataset_info = json.loads('''{json.dumps(dataset_info)}''')
 
@@ -210,10 +223,16 @@ processor = SparkBatchProcessor()
 # **CRITICAL: Initialize Spark session before timing starts**
 processor._initialize_spark()
 
+# ------------------------------------------------------------
 # Load dataset (pre-processing, before timing)
+# ------------------------------------------------------------
 input_file = dataset_info['file_path']
 df = pd.read_csv(input_file)
 records = df.to_dict('records')
+# Track initial memory before heavy work
+process_handle = psutil.Process()
+initial_mem = process_handle.memory_info().rss  # bytes
+
 total_records = len(records)
 
 # Determine data type for compliance
@@ -268,12 +287,20 @@ def process_record_distributed(row):
     # Create engine in worker process
     engine = EnhancedAnonymizationEngine()
     
-    # Apply compliance checking
+    # Apply compliance checking with timing
+    comp_start = time.time()
     compliance_result = detailed_compliance_check(record_dict, data_type)
+    comp_time = time.time() - comp_start
     violations = len(compliance_result['violations'])
     
-    # Apply anonymization
+    # Apply anonymization with timing
+    anon_start = time.time()
     anonymized_record = engine.anonymize_record(record_dict, anonymization_config)
+    anon_time = time.time() - anon_start
+    
+    # Embed timing in record for aggregation
+    anonymized_record['compliance_time'] = comp_time
+    anonymized_record['anonymization_time'] = anon_time
     
     # Add metadata
     anonymized_record['compliance_violations'] = violations
@@ -303,6 +330,28 @@ violations_detected = sum(
 end_time = time.time()
 pure_processing_time = end_time - start_time
 
+# ------------------------------------------------------------
+# Resource metrics
+# ------------------------------------------------------------
+final_mem = process_handle.memory_info().rss  # bytes
+memory_usage_mb = final_mem / 1024 / 1024  # Peak RSS memory
+# CPU percent since last call; gives rough utilisation snapshot
+cpu_usage_percent = psutil.cpu_percent(interval=0.2)
+
+# ------------------------------------------------------------
+# Latency & throughput metrics
+# ------------------------------------------------------------
+records_per_second = total_records / pure_processing_time if pure_processing_time > 0 else 0
+avg_latency_ms = (pure_processing_time * 1000) / total_records if total_records else 0
+# For batch we treat average as min/max as we do not collect per-record latency
+max_latency_ms = avg_latency_ms
+min_latency_ms = avg_latency_ms
+latency_std_ms = 0
+
+# Aggregate overhead metrics
+anonymization_overhead = sum(r.get('anonymization_time', 0) for r in processed_records)
+compliance_check_time = sum(r.get('compliance_time', 0) for r in processed_records)
+
 # Calculate utility metrics from results
 sample_original = records[0] if records else {{}}
 sample_anonymized = processed_records[0] if processed_records else {{}}
@@ -322,9 +371,6 @@ utility_metrics = engine.calculate_utility_metrics(
     sample_original, sample_anonymized, anonymization_config
 )
 
-# Calculate throughput
-records_per_second = total_records / pure_processing_time if pure_processing_time > 0 else 0
-
 # Stop Spark session
 if processor.spark:
     processor.spark.stop()
@@ -335,12 +381,18 @@ result = {{
     'total_records': total_records,
     'violations_detected': violations_detected,
     'violation_rate': violations_detected / total_records if total_records > 0 else 0,
-    'anonymization_overhead': 0,  # Not measured separately in this approach
-    'compliance_check_time': 0,   # Not measured separately in this approach
+    'anonymization_overhead': anonymization_overhead,
+    'compliance_check_time': compliance_check_time,
     'information_loss_score': utility_metrics.get('information_loss', 0),
     'utility_preservation_score': utility_metrics.get('utility_preservation', 0),
     'privacy_level_score': utility_metrics.get('privacy_level_score', 0.5),
-    'records_per_second': records_per_second
+    'records_per_second': records_per_second,
+    'memory_usage_mb': memory_usage_mb,
+    'cpu_usage_percent': cpu_usage_percent,
+    'avg_latency_ms': avg_latency_ms,
+    'max_latency_ms': max_latency_ms,
+    'min_latency_ms': min_latency_ms,
+    'latency_std_ms': latency_std_ms
 }}
 
 print("RESULT_JSON:" + json.dumps(result))
@@ -383,13 +435,18 @@ print("RESULT_JSON:" + json.dumps(result))
                 'total_records': result['total_records'],
                 'violations_detected': result['violations_detected'],
                 'violation_rate': result['violation_rate'],
-                'memory_usage_mb': 0,  # Not measured in subprocess
-                'cpu_usage_percent': 0,  # Not measured in subprocess
+                'memory_usage_mb': result['memory_usage_mb'],
+                'cpu_usage_percent': result['cpu_usage_percent'],
                 'anonymization_overhead': result['anonymization_overhead'],
                 'compliance_check_time': result['compliance_check_time'],
                 'information_loss_score': result['information_loss_score'],
                 'utility_preservation_score': result['utility_preservation_score'],
-                'privacy_level_score': result['privacy_level_score']
+                'privacy_level_score': result['privacy_level_score'],
+                'avg_latency_ms': result['avg_latency_ms'],
+                'max_latency_ms': result['max_latency_ms'],
+                'min_latency_ms': result['min_latency_ms'],
+                'latency_std_ms': result['latency_std_ms'],
+                'e2e_latency_ms': timing_results['total_time'] * 1000 / result['total_records'] if result['total_records'] else 0
             }
             
             # Record experiment
@@ -408,6 +465,7 @@ print("RESULT_JSON:" + json.dumps(result))
             print(f"   📈 Processing rate: {result['records_per_second']:.2f} records/second")
             print(f"   ⏱️  Pure processing time: {result['pure_processing_time']:.3f}s")
             print(f"   🔍 Violations detected: {result['violations_detected']}")
+            print(f"   📉 Memory peak: {result['memory_usage_mb']:.2f} MB | CPU: {result['cpu_usage_percent']:.1f}% | Avg Latency: {result['avg_latency_ms']:.2f} ms")
             
             return True
             
@@ -487,8 +545,20 @@ def main():
     # Create directory structure
     create_research_directory_structure()
     
-    # Initialize analyzer
-    analyzer = BatchPipelineAnalyzer()
+    import argparse
+    parser = argparse.ArgumentParser(description="Batch pipeline research analysis")
+    parser.add_argument("--sizes", help="Comma-separated list of dataset sizes to process (e.g. 1000,10000)")
+    args = parser.parse_args()
+
+    sizes_filter = None
+    if args.sizes:
+        try:
+            sizes_filter = [int(s.strip()) for s in args.sizes.split(',') if s.strip()]
+        except ValueError:
+            print("❌ Invalid --sizes argument; must be comma-separated integers")
+            sys.exit(1)
+
+    analyzer = BatchPipelineAnalyzer(selected_sizes=sizes_filter)
     
     # Run comprehensive analysis
     summary = analyzer.run_comprehensive_analysis()

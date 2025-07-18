@@ -1,0 +1,129 @@
+# Regulatory-Aware Routing Rules (GDPR & HIPAA)
+# These rules are evaluated BEFORE operational rules
+# Priority: lower numbers = higher priority
+
+regulatory_rules:
+  # GDPR Rules
+  - id: G1
+    description: "GDPR Art 6 violation - no legal basis for EU subject"
+    condition: "not record.get('legal_basis') and record.get('data_subject_country', '').startswith('EU')"
+    route: stream
+    priority: 1
+    regulation: GDPR
+    severity: critical
+
+  - id: G2
+    description: "GDPR Art 9 special category data needs strict protection"
+    condition: "record.get('category') in context.get('special_categories', [])"
+    route: stream
+    priority: 2
+    regulation: GDPR
+    severity: high
+
+  - id: G3
+    description: "GDPR consent expiry - re-consent workflow"
+    condition: "record.get('consent_expiry') and datetime.fromisoformat(record.get('consent_expiry', '9999-12-31')) < datetime.now()"
+    route: batch
+    priority: 3
+    regulation: GDPR
+    severity: medium
+
+  - id: G4
+    description: "GDPR retention date - imminent deletion window"
+    condition: "record.get('retention_date') and datetime.fromisoformat(record.get('retention_date', '9999-12-31')) < datetime.now() + timedelta(days=7)"
+    route: batch
+    priority: 4
+    regulation: GDPR
+    severity: medium
+
+  # HIPAA Rules
+  - id: H1
+    description: "HIPAA Security Rule - unencrypted ePHI"
+    condition: "record.get('contains_phi', False) and record.get('encryption', 'none') == 'none'"
+    route: stream
+    priority: 5
+    regulation: HIPAA
+    severity: critical
+
+  - id: H2
+    description: "HIPAA audit logging requirement"
+    condition: "record.get('audit_required', False) == True"
+    route: stream
+    priority: 6
+    regulation: HIPAA
+    severity: high
+
+  - id: H3
+    description: "HIPAA breach notification - 72h clock"
+    condition: "record.get('breach_suspected', False) == True"
+    route: stream
+    priority: 7
+    regulation: HIPAA
+    severity: critical
+
+# Configuration for regulatory rules
+config:
+  special_categories:
+    - "health"
+    - "genetic"
+    - "biometric"
+    - "political"
+    - "religious"
+    - "racial"
+    - "sexual"
+    - "trade_union"
+
+  # Enable/disable regulatory rule evaluation
+  enable_gdpr_rules: true
+  enable_hipaa_rules: true
+
+  # Compliance reporting
+  log_regulatory_decisions: true
+  compliance_report_interval: 3600 # seconds
+
+  # Safety settings
+  regulatory_rule_timeout: 0.002 # 2ms timeout per regulatory rule
+  fallback_route_on_error: stream # safer default for regulatory failures
+
+eu_countries:
+  - AT
+  - BE
+  - BG
+  - HR
+  - CY
+  - CZ
+  - DK
+  - EE
+  - FI
+  - FR
+  - DE
+  - EL
+  - HU
+  - IE
+  - IT
+  - LV
+  - LT
+  - LU
+  - MT
+  - NL
+  - PL
+  - PT
+  - RO
+  - SK
+  - SI
+  - ES
+  - SE
+
+special_categories:
+  - health
+  - biometric
+  - genetic
+  - racial
+  - ethnic
+  - political
+  - philosophical
+  - sexual
+
+high_value_amount: 10000
+batch_queue_threshold: 1000
+stream_ratio_default: 0.3

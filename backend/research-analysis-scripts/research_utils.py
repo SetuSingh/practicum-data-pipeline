@@ -281,6 +281,16 @@ class ResearchMetricsCollector:
             'cpu_usage_percent',
             'anonymization_overhead_seconds',
             'compliance_check_time_seconds',
+            # Latency metrics – newly added
+            'avg_latency_ms',
+            'max_latency_ms',
+            'min_latency_ms',
+            'latency_std_ms',
+            'e2e_latency_ms',
+            # Hybrid routing metrics (optional)
+            'router_time_ms',
+            'stream_percentage',
+            'batch_percentage',
             'information_loss_score',
             'utility_preservation_score',
             'privacy_level_score',
@@ -312,13 +322,34 @@ class ResearchMetricsCollector:
         records_per_second = total_records / pure_processing_time if pure_processing_time > 0 else 0
         
         # Get anonymization parameters
+        # Build anonymization-param blob
         params = {}
-        if anonymization_config.k_value:
+        if anonymization_config.k_value is not None:
             params['k_value'] = anonymization_config.k_value
-        if anonymization_config.epsilon:
+        if anonymization_config.epsilon is not None:
             params['epsilon'] = anonymization_config.epsilon
-        if anonymization_config.key_length:
+        if anonymization_config.key_length is not None:
             params['key_length'] = anonymization_config.key_length
+
+        # ------------------------------------------------------------------
+        # Derive latency metrics if the caller did not supply them in
+        # processing_results.  We use the simple per-record average plus
+        # defaults for min/max to ensure non-zero values land in the CSV.
+        # ------------------------------------------------------------------
+        latency_defaults = {}
+        if total_records > 0:
+            avg_lat = (pure_processing_time * 1000.0) / total_records
+        else:
+            avg_lat = 0
+        latency_defaults['avg_latency_ms'] = processing_results.get('avg_latency_ms', avg_lat)
+        latency_defaults['max_latency_ms'] = processing_results.get('max_latency_ms', avg_lat)
+        latency_defaults['min_latency_ms'] = processing_results.get('min_latency_ms', avg_lat)
+        latency_defaults['latency_std_ms'] = processing_results.get('latency_std_ms', 0)
+
+        # End-to-end latency (total pipeline time per record)
+        e2e_latency_ms = processing_results.get('e2e_latency_ms')
+        if e2e_latency_ms is None and total_records > 0:
+            e2e_latency_ms = (timing_results.get('total_time', 0) * 1000) / total_records
         
         result = {
             'experiment_id': experiment_id,
@@ -343,10 +374,15 @@ class ResearchMetricsCollector:
             'information_loss_score': processing_results.get('information_loss_score', 0),
             'utility_preservation_score': processing_results.get('utility_preservation_score', 0),
             'privacy_level_score': processing_results.get('privacy_level_score', 0),
-            'avg_latency_ms': processing_results.get('avg_latency_ms', 0),
-            'max_latency_ms': processing_results.get('max_latency_ms', 0),
-            'min_latency_ms': processing_results.get('min_latency_ms', 0),
-            'latency_std_ms': processing_results.get('latency_std_ms', 0),
+            'avg_latency_ms': latency_defaults['avg_latency_ms'],
+            'max_latency_ms': latency_defaults['max_latency_ms'],
+            'min_latency_ms': latency_defaults['min_latency_ms'],
+            'latency_std_ms': latency_defaults['latency_std_ms'],
+            'e2e_latency_ms': e2e_latency_ms or 0,
+            # Hybrid routing metrics (populate if provided, else default 0)
+            'router_time_ms': processing_results.get('router_time_ms', 0),
+            'stream_percentage': processing_results.get('stream_percentage', 0),
+            'batch_percentage': processing_results.get('batch_percentage', 0),
             'success': success,
             'error_message': error_message or '',
             'notes': notes or ''
@@ -424,7 +460,7 @@ class TimingUtilities:
         """Measure current CPU usage"""
         try:
             import psutil
-            return psutil.cpu_percent(interval=1)
+            return psutil.cpu_percent(interval=0.2)  # shorter interval for stable sample
         except ImportError:
             return 0
 

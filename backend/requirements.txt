@@ -25,6 +25,11 @@ dash>=2.14.0
 python-dotenv==1.0.0
 requests==2.31.0
 
+# System Metrics
+psutil>=5.9.0
+# YAML parsing for policy-as-code
+PyYAML>=6.0
+
 # Testing
 pytest>=7.4.0
 

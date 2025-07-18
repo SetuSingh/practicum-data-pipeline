@@ -59,7 +59,10 @@ class StormStreamProcessor:
             'processed_records': 0,     # Total records processed
             'violations_detected': 0,   # Number of compliance violations found
             'start_time': None,         # Processing start timestamp
-            'processing_times': []      # Individual record processing times for latency analysis
+            'processing_times': [],
+            # Individual record processing times for latency analysis
+            'compliance_overhead': 0,
+            'anonymization_overhead': 0
         }
     
     def setup_kafka(self):
@@ -247,8 +250,10 @@ class StormStreamProcessor:
         # Step 1: Add processing metadata for tracking (pure processing)
         record['stream_processed_at'] = datetime.now().isoformat()
         
-        # Step 2: Perform real-time compliance checking (pure processing)
+        # Step 2: Perform real-time compliance checking (pure processing) with timing
+        comp_start = time.time()
         violations = self.check_compliance_realtime(record)
+        comp_time = time.time() - comp_start
         record['stream_violations'] = violations            # List of violations found
         record['stream_compliant'] = len(violations) == 0   # Boolean compliance status
         record['has_violations'] = len(violations) > 0      # Standard violation flag
@@ -256,9 +261,12 @@ class StormStreamProcessor:
         # Step 3: Apply anonymization for records with violations (pure processing)
         # Only anonymize when violations are detected to preserve data utility
         if violations:
+            anon_start = time.time()
             anonymized_record = self.anonymization_engine.anonymize_record(record, anonymization_config)
+            anon_time = time.time() - anon_start
         else:
             anonymized_record = record  # Keep compliant records unchanged
+            anon_time = 0
         
         # Step 4: Add processing metadata (pure processing)
         anonymized_record['processing_method'] = 'stream'
@@ -279,6 +287,14 @@ class StormStreamProcessor:
         
         if len(violations) > 0:
             self.metrics['violations_detected'] += 1
+        
+        # Store overhead timings
+        anonymized_record['compliance_time'] = comp_time
+        anonymized_record['anonymization_time'] = anon_time
+
+        # Accumulate processor-level overhead metrics
+        self.metrics['compliance_overhead'] += comp_time
+        self.metrics['anonymization_overhead'] += anon_time
         
         return anonymized_record
     

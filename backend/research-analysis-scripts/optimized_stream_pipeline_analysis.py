@@ -54,13 +54,18 @@ except ImportError:
     from common.anonymization_engine import AnonymizationConfig, AnonymizationMethod
     from common.compliance_rules import ComplianceRuleEngine, detailed_compliance_check
 
+# ------------------------------------------------------------
+# Optimized Stream Pipeline Analyzer
+# ------------------------------------------------------------
+
 class OptimizedStreamPipelineAnalyzer:
     """Optimized stream processing pipeline analyzer with predefined topics and consumer groups"""
     
-    def __init__(self, output_dir: str = "results"):
+    def __init__(self, output_dir: str = "results", selected_sizes: Optional[List[int]] = None):
         self.output_dir = output_dir
         self.results_file = os.path.join(output_dir, "stream_pipeline_results.csv")
         
+        self.selected_sizes = set(selected_sizes) if selected_sizes else None
         # Initialize components
         self.data_generator = ResearchDataGenerator()
         self.config_manager = AnonymizationConfigManager()
@@ -70,7 +75,7 @@ class OptimizedStreamPipelineAnalyzer:
         # Kafka configuration
         self.kafka_servers = ['localhost:9093']
         
-        # Predefined topics for each dataset type and size
+        # Predefined topics / consumer groups honour size filter
         self.topics = self._generate_predefined_topics()
         
         # Consumer groups for each configuration
@@ -90,6 +95,8 @@ class OptimizedStreamPipelineAnalyzer:
         topics = {}
         dataset_types = ['healthcare', 'financial']
         dataset_sizes = [1000, 2500, 5000, 10000, 20000, 40000, 50000]
+        if self.selected_sizes:
+            dataset_sizes = [s for s in dataset_sizes if s in self.selected_sizes]
         
         for data_type in dataset_types:
             for size in dataset_sizes:
@@ -106,6 +113,8 @@ class OptimizedStreamPipelineAnalyzer:
         configs = self.config_manager.get_all_configs()
         dataset_types = ['healthcare', 'financial']
         dataset_sizes = [1000, 2500, 5000, 10000, 20000, 40000, 50000]
+        if self.selected_sizes:
+            dataset_sizes = [s for s in dataset_sizes if s in self.selected_sizes]
         
         for config in configs:
             # Generate consumer group name based on configuration
@@ -192,8 +201,10 @@ class OptimizedStreamPipelineAnalyzer:
         print("\n🌊 Streaming all data once to populate topics...")
         
         try:
-            # Get all datasets
+            # Get all datasets and honour size filter (if any)
             datasets = self.data_generator.generate_test_datasets()
+            if self.selected_sizes:
+                datasets = [d for d in datasets if d['size'] in self.selected_sizes]
             
             # Create producer
             producer = KafkaProducer(
@@ -256,6 +267,8 @@ class OptimizedStreamPipelineAnalyzer:
         
         # Get test datasets metadata (no regeneration needed)
         datasets = self.data_generator.generate_test_datasets()
+        if self.selected_sizes:
+            datasets = [d for d in datasets if d['size'] in self.selected_sizes]
         print(f"✅ Using {len(datasets)} existing test datasets")
         
         # Get all anonymization configurations
@@ -560,8 +573,20 @@ def main():
     # Create directory structure
     create_research_directory_structure()
     
-    # Initialize analyzer
-    analyzer = OptimizedStreamPipelineAnalyzer()
+    import argparse
+    parser = argparse.ArgumentParser(description="Optimized stream pipeline analysis")
+    parser.add_argument("--sizes", help="Comma-separated list of dataset sizes to process (e.g. 1000,20000)")
+    args = parser.parse_args()
+
+    sizes_filter = None
+    if args.sizes:
+        try:
+            sizes_filter = [int(s.strip()) for s in args.sizes.split(',') if s.strip()]
+        except ValueError:
+            print("❌ Invalid --sizes argument; must be comma-separated integers")
+            sys.exit(1)
+
+    analyzer = OptimizedStreamPipelineAnalyzer(selected_sizes=sizes_filter)
     
     # Print topics and consumer groups
     print("\n📝 Topics and Consumer Groups:")
