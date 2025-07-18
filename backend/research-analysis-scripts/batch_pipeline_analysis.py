@@ -494,7 +494,20 @@ print("RESULT_JSON:" + json.dumps(result))
         
         if successful_df.empty:
             return {"error": "No successful experiments found."}
+
+        # Ensure dataset_size is numeric to avoid type issues
+        successful_df['dataset_size'] = pd.to_numeric(successful_df['dataset_size'], errors='coerce')
+        successful_df = successful_df.dropna(subset=['dataset_size'])
         
+        # Ensure numeric types for key metrics
+        numeric_cols = ['records_per_second', 'pure_processing_time_seconds']
+        for col in numeric_cols:
+            if col in successful_df.columns:
+                successful_df[col] = pd.to_numeric(successful_df[col], errors='coerce')
+
+        # Drop rows with missing throughput (extremely unlikely but guards idxmax)
+        throughput_df = successful_df.dropna(subset=['records_per_second'])
+
         # Analysis by anonymization method
         method_analysis = {}
         for method in successful_df['anonymization_method'].unique():
@@ -516,17 +529,24 @@ print("RESULT_JSON:" + json.dumps(result))
             size_analysis[size] = {
                 'avg_processing_time': size_data['pure_processing_time_seconds'].mean(),
                 'avg_records_per_second': size_data['records_per_second'].mean(),
-                'scaling_efficiency': size_data['records_per_second'].mean() / size
+                'scaling_efficiency': size_data['records_per_second'].mean() / float(size)
             }
         
         # Overall statistics
+        if not throughput_df.empty:
+            best_idx = throughput_df['records_per_second'].idxmax()
+            best_method = throughput_df.loc[best_idx, 'anonymization_method']
+            best_rps = throughput_df.loc[best_idx, 'records_per_second']
+        else:
+            best_method, best_rps = None, 0
+
         overall_stats = {
             'total_experiments': len(successful_df),
             'avg_processing_time': successful_df['pure_processing_time_seconds'].mean(),
             'avg_records_per_second': successful_df['records_per_second'].mean(),
             'best_performance': {
-                'method': successful_df.loc[successful_df['records_per_second'].idxmax(), 'anonymization_method'],
-                'records_per_second': successful_df['records_per_second'].max()
+                'method': best_method,
+                'records_per_second': best_rps
             }
         }
         
