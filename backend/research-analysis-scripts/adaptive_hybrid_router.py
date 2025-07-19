@@ -739,10 +739,31 @@ print("BATCH_RESULT:" + json.dumps(result, default=str))
                 # Calculate routing overhead
                 avg_routing_time = np.mean(routing_times) if routing_times else 0
                 
-                # Estimate utility metrics
-                information_loss = 0.25 if violations_detected > 0 else 0.1
-                utility_preservation = 0.75 if violations_detected > 0 else 0.9
-                privacy_level = 0.8 if violations_detected > 0 else 0.7
+                # --------------------------------------------------------
+                # NEW: Compute information-loss / utility using dataset-wide
+                #      distance metric (no heuristics).
+                # --------------------------------------------------------
+                # Build numeric range map once from *original* records
+                numeric_fields = {}
+                for f in records[0].keys():
+                    try:
+                        vals = [float(r[f]) for r in records if r.get(f) is not None]
+                        if vals:
+                            numeric_fields[f] = (min(vals), max(vals))
+                    except (ValueError, TypeError):
+                        continue
+                
+                losses, utils, privs = [], [], []
+                eng = EnhancedAnonymizationEngine()
+                for orig_rec, anon_rec in zip(records, all_processed):
+                    m = eng.calculate_utility_metrics(orig_rec, anon_rec, anonymization_config, numeric_fields)
+                    losses.append(m['information_loss'])
+                    utils.append(m['utility_preservation'])
+                    privs.append(m['privacy_level'])
+                
+                information_loss = float(np.mean(losses)) if losses else 0.0
+                utility_preservation = float(np.mean(utils)) if utils else 0.0
+                privacy_level = float(np.mean(privs)) if privs else 0.0
             
             # Compile timing results with detailed infrastructure timing
             timing_results = {

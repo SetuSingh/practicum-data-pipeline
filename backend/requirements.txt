@@ -21,9 +21,18 @@ kafka-python==2.2.15
 plotly>=5.17.0
 dash>=2.14.0
 
+# Statistical Analysis & Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+scipy>=1.11.0
+statsmodels>=0.14.0
+
 # Utilities
 python-dotenv==1.0.0
 requests==2.31.0
+
+# String edit-distance (for utility metrics)
+python-Levenshtein>=0.23.0
 
 # System Metrics
 psutil>=5.9.0

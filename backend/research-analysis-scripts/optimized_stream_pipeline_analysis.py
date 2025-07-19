@@ -50,9 +50,11 @@ from research_utils import (
 try:
     from src.common.anonymization_engine import AnonymizationConfig, AnonymizationMethod
     from src.common.compliance_rules import ComplianceRuleEngine, detailed_compliance_check
+    from src.common.anonymization_engine import EnhancedAnonymizationEngine  # added for utility metrics
 except ImportError:
     from common.anonymization_engine import AnonymizationConfig, AnonymizationMethod
     from common.compliance_rules import ComplianceRuleEngine, detailed_compliance_check
+    from common.anonymization_engine import EnhancedAnonymizationEngine  # added for utility metrics
 
 # ------------------------------------------------------------
 # Optimized Stream Pipeline Analyzer
@@ -411,19 +413,42 @@ class OptimizedStreamPipelineAnalyzer:
             
             # POST-PROCESSING (not timed for research)
             with TimingUtilities.time_section("post_processing") as post_timer:
-                # Calculate metrics
-                # OPTION A — quick flag-based check (commented out for future debugging)
-                # flag_detected = sum(
-                #     1 for r in processed_records
-                #     if str(r.get('has_violations', '')).lower() == 'true'
-                # )
+                # Determine compliance violations across processed records
+                from src.common.compliance_rules import detailed_compliance_check as _dcheck
+                violations_detected = 0
+                for anon_rec in processed_records:
+                    if not _dcheck(anon_rec, dataset_info['type'])['compliant']:
+                        violations_detected += 1
 
-                # OPTION B — authoritative rule-engine check (active by default)
-                from common.compliance_rules import detailed_compliance_check
-                violations_detected = sum(
-                    1 for r in processed_records
-                    if not detailed_compliance_check(r, dataset_info['type'])['compliant']
-                )
+                # --------------------------------------------------------
+                # NEW: Compute information-loss / utility consistently
+                # --------------------------------------------------------
+                # Load original dataset for range calculations
+                import pandas as _pd_orig
+                _orig_df = _pd_orig.read_csv(dataset_info['file_path'])
+                records = _orig_df.to_dict('records')  # <-- for distance computation
+
+                numeric_fields = {}
+                if processed_records:
+                    for f in processed_records[0].keys():
+                        try:
+                            vals = [float(r_orig[f]) for r_orig in records if r_orig.get(f) is not None]
+                            if vals:
+                                numeric_fields[f] = (min(vals), max(vals))
+                        except (ValueError, TypeError):
+                            continue
+                    eng = EnhancedAnonymizationEngine()
+                    losses, utils, privs = [], [], []
+                    for orig_rec, anon_rec in zip(records, processed_records):
+                        m = eng.calculate_utility_metrics(orig_rec, anon_rec, anonymization_config, numeric_fields)
+                        losses.append(m['information_loss'])
+                        utils.append(m['utility_preservation'])
+                        privs.append(m['privacy_level'])
+                    information_loss = float(np.mean(losses)) if losses else 0.0
+                    utility_preservation = float(np.mean(utils)) if utils else 0.0
+                    privacy_level = float(np.mean(privs)) if privs else 0.0
+
+                # Capture resource metrics at end of processing
                 final_memory = TimingUtilities.measure_memory_usage()
                 cpu_usage = TimingUtilities.measure_cpu_usage()
                 
@@ -438,9 +463,9 @@ class OptimizedStreamPipelineAnalyzer:
                     avg_latency = max_latency = min_latency = latency_std = 0
                 
                 # Estimate utility metrics
-                information_loss = 0.3 if violations_detected > 0 else 0
-                utility_preservation = 0.7 if violations_detected > 0 else 1.0
-                privacy_level = 0.8 if violations_detected > 0 else 0.5
+                # information_loss = 0.3 if violations_detected > 0 else 0
+                # utility_preservation = 0.7 if violations_detected > 0 else 1.0
+                # privacy_level = 0.8 if violations_detected > 0 else 0.5
             
             # Compile timing results
             timing_results = {
