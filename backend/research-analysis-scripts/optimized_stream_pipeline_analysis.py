@@ -461,11 +461,12 @@ class OptimizedStreamPipelineAnalyzer:
                     latency_std = np.std(processing_times) if processing_times else 0
                 else:
                     avg_latency = max_latency = min_latency = latency_std = 0
-                
-                # Estimate utility metrics
-                # information_loss = 0.3 if violations_detected > 0 else 0
-                # utility_preservation = 0.7 if violations_detected > 0 else 1.0
-                # privacy_level = 0.8 if violations_detected > 0 else 0.5
+
+                # Aggregate overhead metrics analogous to batch/hybrid
+                anonymization_overhead = sum(r.get('anonymization_time', 0) for r in processed_records)
+                compliance_time       = sum(r.get('compliance_time', 0) for r in processed_records)
+
+                # (utility metrics already computed above)
             
             # Compile timing results
             timing_results = {
@@ -483,6 +484,8 @@ class OptimizedStreamPipelineAnalyzer:
                 'violation_rate': violations_detected / total_records if total_records > 0 else 0,
                 'memory_usage_mb': final_memory,
                 'cpu_usage_percent': cpu_usage,
+                'anonymization_overhead': anonymization_overhead,
+                'compliance_check_time': compliance_time,
                 'information_loss_score': information_loss,
                 'utility_preservation_score': utility_preservation,
                 'privacy_level_score': privacy_level,
