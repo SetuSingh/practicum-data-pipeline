@@ -352,24 +352,27 @@ latency_std_ms = 0
 anonymization_overhead = sum(r.get('anonymization_time', 0) for r in processed_records)
 compliance_check_time = sum(r.get('compliance_time', 0) for r in processed_records)
 
-# Calculate utility metrics from results
-sample_original = records[0] if records else {{}}
-sample_anonymized = processed_records[0] if processed_records else {{}}
+# Replace the section that calculates utility metrics
+numeric_ranges = {{}}
+for key in records[0].keys():
+    try:
+        vals = [float(r[key]) for r in records if r.get(key) is not None]
+        if vals:
+            numeric_ranges[key] = (min(vals), max(vals))
+    except (ValueError, TypeError):
+        continue
 
-# Create anonymization config for utility calculation
-method = AnonymizationMethod(config_data['method'])
-anonymization_config = AnonymizationConfig(
-    method=method,
-    k_value=config_data.get('k_value'),
-    epsilon=config_data.get('epsilon'),
-    key_length=config_data.get('key_length')
-)
-
-# Create engine for utility calculation
 engine = EnhancedAnonymizationEngine()
-utility_metrics = engine.calculate_utility_metrics(
-    sample_original, sample_anonymized, anonymization_config
-)
+losses, utils, privs = [], [], []
+for orig_r, anon_r in zip(records, processed_records):
+    m = engine.calculate_utility_metrics(orig_r, anon_r, anonymization_config, numeric_ranges)
+    losses.append(m['information_loss'])
+    utils.append(m['utility_preservation'])
+    privs.append(m['privacy_level'])
+
+information_loss = sum(losses)/len(losses) if losses else 0.0
+utility_preservation = sum(utils)/len(utils) if utils else 0.0
+privacy_level_score = sum(privs)/len(privs) if privs else 0.0
 
 # Stop Spark session
 if processor.spark:
@@ -383,9 +386,9 @@ result = {{
     'violation_rate': violations_detected / total_records if total_records > 0 else 0,
     'anonymization_overhead': anonymization_overhead,
     'compliance_check_time': compliance_check_time,
-    'information_loss_score': utility_metrics.get('information_loss', 0),
-    'utility_preservation_score': utility_metrics.get('utility_preservation', 0),
-    'privacy_level_score': utility_metrics.get('privacy_level_score', 0.5),
+    'information_loss_score': information_loss,
+    'utility_preservation_score': utility_preservation,
+    'privacy_level_score': privacy_level_score,
     'records_per_second': records_per_second,
     'memory_usage_mb': memory_usage_mb,
     'cpu_usage_percent': cpu_usage_percent,

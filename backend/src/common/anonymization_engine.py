@@ -13,7 +13,7 @@ import hmac
 import secrets
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Any, Optional, Union
+from typing import Dict, List, Any, Optional, Union, Tuple
 from dataclasses import dataclass
 from enum import Enum
 import json
@@ -346,48 +346,91 @@ class EnhancedAnonymizationEngine:
         return self.supported_configs
     
     def calculate_utility_metrics(self, original: Dict[str, Any], anonymized: Dict[str, Any], 
-                                config: AnonymizationConfig) -> Dict[str, float]:
-        """
-        Calculate utility preservation metrics for anonymized data
-        
+                                config: AnonymizationConfig, 
+                                field_ranges: Optional[Dict[str, Tuple[float, float]]] = None) -> Dict[str, float]:
+        """Calculate information-loss / utility-preservation in a data-driven way.
+
         Args:
-            original: Original record
-            anonymized: Anonymized record
-            config: Anonymization configuration used
-            
+            original: Original (pre-anonymisation) record.
+            anonymized: Anonymised record.
+            config: The anonymisation config used (still returned in output for reference).
+            field_ranges: Optional mapping {field: (min, max)} computed on the *original* dataset. If not
+                          supplied we fall back to per-record heuristics (works but less robust).
+
         Returns:
-            Dictionary of utility metrics
+            dict with information_loss (0-1) and utility_preservation (0-1).
         """
-        metrics = {}
-        
-        # Calculate field preservation rate
-        preserved_fields = 0
-        total_fields = 0
-        
-        for field, value in original.items():
-            if field.startswith('_'):  # Skip metadata fields
+        diffs = []
+        for field, orig_val in original.items():
+            # Skip internal / metadata fields
+            if field.startswith('_') or field not in anonymized:
                 continue
-            total_fields += 1
-            
-            if field in anonymized and anonymized[field] is not None:
-                preserved_fields += 1
-        
-        metrics['field_preservation_rate'] = preserved_fields / total_fields if total_fields > 0 else 0
-        
-        # Calculate information loss based on method
-        if config.method == AnonymizationMethod.K_ANONYMITY:
-            # For k-anonymity, information loss increases with k
-            metrics['information_loss'] = min(1.0, config.k_value / 20.0)
-        elif config.method == AnonymizationMethod.DIFFERENTIAL_PRIVACY:
-            # For DP, information loss decreases with epsilon
-            metrics['information_loss'] = max(0.0, 1.0 - config.epsilon)
-        elif config.method == AnonymizationMethod.TOKENIZATION:
-            # Tokenization preserves structure but loses readability
-            metrics['information_loss'] = 0.5  # Fixed moderate loss
-        
-        metrics['utility_preservation'] = 1.0 - metrics['information_loss']
-        
-        return metrics
+
+            anon_val = anonymized.get(field)
+
+            # Exact match or both missing ⇒ no loss for this field
+            if orig_val == anon_val:
+                diffs.append(0.0)
+                continue
+
+            # Attempt numeric comparison
+            try:
+                orig_float = float(orig_val)
+                anon_float = float(anon_val)
+                # Determine range for normalisation
+                if field_ranges and field in field_ranges and field_ranges[field][1] != field_ranges[field][0]:
+                    f_min, f_max = field_ranges[field]
+                    denom = f_max - f_min
+                else:
+                    # Fallback: use magnitude of original value (avoid div-by-zero)
+                    denom = abs(orig_float) if abs(orig_float) > 0 else 1.0
+                diff = abs(orig_float - anon_float) / denom
+                # Clamp to [0,1] in case of outliers / noise
+                diff = max(0.0, min(1.0, diff))
+                diffs.append(diff)
+                continue
+            except (ValueError, TypeError):
+                # Non-numeric, treat as categorical
+                pass
+
+            # Categorical difference: use normalised Levenshtein (edit) distance
+            orig_str = str(orig_val)
+            anon_str = str(anon_val)
+
+            try:
+                # Fast path – python-Levenshtein if available
+                from Levenshtein import distance as lev_dist  # type: ignore
+                edit_distance = lev_dist(orig_str, anon_str)
+            except ModuleNotFoundError:
+                # Fallback – difflib (pure-Python, slower but avoids extra dep)
+                import difflib
+                seq_match = difflib.SequenceMatcher(None, orig_str, anon_str)
+                # Convert similarity ratio → edit distance approximation
+                edit_distance = int((1.0 - seq_match.ratio()) * max(len(orig_str), len(anon_str)))
+
+            max_len = max(len(orig_str), 1)  # avoid divide-by-zero
+            diff_norm = edit_distance / max_len
+            diff_norm = max(0.0, min(1.0, diff_norm))
+            diffs.append(diff_norm)
+
+        information_loss = float(np.mean(diffs)) if diffs else 0.0
+        utility_preservation = 1.0 - information_loss
+
+        # Simple privacy-level proxy (config specific)
+        if config.method == AnonymizationMethod.K_ANONYMITY and config.k_value:
+            privacy_level = 1.0 - 1.0 / max(1, config.k_value)
+        elif config.method == AnonymizationMethod.DIFFERENTIAL_PRIVACY and config.epsilon is not None:
+            privacy_level = 1.0 - np.exp(-float(config.epsilon))
+        elif config.method == AnonymizationMethod.TOKENIZATION and config.key_length:
+            privacy_level = min(1.0, float(config.key_length) / 512.0)
+        else:
+            privacy_level = 0.5  # default / unknown
+
+        return {
+            'information_loss': information_loss,
+            'utility_preservation': utility_preservation,
+            'privacy_level': privacy_level
+        }
 
 # Convenience functions for backward compatibility
 def create_anonymization_engine() -> EnhancedAnonymizationEngine:

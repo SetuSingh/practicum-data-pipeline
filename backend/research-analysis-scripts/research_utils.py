@@ -318,12 +318,8 @@ class ResearchMetricsCollector:
         self.results = []
         self.experiment_start_time = datetime.now()
         
-        # Initialize CSV file with headers
-        self._initialize_csv()
-    
-    def _initialize_csv(self):
-        """Initialize CSV file with research metrics headers"""
-        headers = [
+        # Fixed header order for all CSV rows
+        self.headers = [
             'experiment_id',
             'timestamp',
             'pipeline_type',
@@ -343,27 +339,23 @@ class ResearchMetricsCollector:
             'cpu_usage_percent',
             'anonymization_overhead_seconds',
             'compliance_check_time_seconds',
-            # Latency metrics – newly added
-            'avg_latency_ms',
-            'max_latency_ms',
-            'min_latency_ms',
-            'latency_std_ms',
-            'e2e_latency_ms',
-            # Hybrid routing metrics (optional)
-            'router_time_ms',
-            'stream_percentage',
-            'batch_percentage',
-            'information_loss_score',
-            'utility_preservation_score',
-            'privacy_level_score',
-            'success',
-            'error_message',
-            'notes'
+            # Latency metrics
+            'avg_latency_ms', 'max_latency_ms', 'min_latency_ms', 'latency_std_ms',
+            'subprocess_overhead_ms', 'e2e_latency_ms',
+            # Hybrid routing metrics (may be 0 for batch/stream)
+            'router_time_ms', 'stream_percentage', 'batch_percentage',
+            'information_loss_score', 'utility_preservation_score', 'privacy_level_score',
+            'success', 'error_message', 'notes'
         ]
-        
+
+        # Initialize CSV file once with the header row
+        self._initialize_csv()
+    
+    def _initialize_csv(self):
+        """Initialize CSV file with research metrics headers"""
+        # Write header row with fixed order
         with open(self.output_file, 'w', newline='') as csvfile:
-            writer = csv.writer(csvfile)
-            writer.writerow(headers)
+            csv.writer(csvfile).writerow(self.headers)
     
     def record_experiment(self, 
                          pipeline_type: str,
@@ -453,9 +445,9 @@ class ResearchMetricsCollector:
         
         self.results.append(result)
         
-        # Append to CSV file
+        # Append row using fixed column order; ignore any unexpected keys
         with open(self.output_file, 'a', newline='') as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=result.keys())
+            writer = csv.DictWriter(csvfile, fieldnames=self.headers, extrasaction='ignore')
             writer.writerow(result)
         
         print(f"📊 Recorded experiment: {experiment_id}")
