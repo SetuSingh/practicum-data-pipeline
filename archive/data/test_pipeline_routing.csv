@@ -1,0 +1,4 @@
+id,patient_name,ssn,phone,email,diagnosis
+P001,John Doe,123-45-6789,(555) 123-4567,john@example.com,diabetes
+P002,Jane Smith,***-**-1234,***-***-****,***@***.com,hypertension
+P003,Bob Johnson,987-65-4321,(555) 987-6543,bob@example.com,asthma

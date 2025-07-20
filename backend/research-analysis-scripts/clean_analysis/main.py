@@ -54,7 +54,7 @@ def aggregate(df: pd.DataFrame) -> pd.DataFrame:
         return df
     group_cols = [
         "pipeline_type",
-        "dataset_type", 
+        "dataset_type",
         "dataset_size",
         "anonymization_method",
         "anonymization_params",
@@ -89,7 +89,7 @@ def safe_plot_save(fig_path: Path):
         plt.close()
     except Exception as e:
         print(f"Warning: Could not save plot {fig_path}: {e}")
-        plt.close()
+    plt.close()
 
 
 def format_dataset_size_axis(ax, sizes):
@@ -473,7 +473,7 @@ def rq2_privacy_utility_radar(all_agg: pd.DataFrame, fig_dir: Path):
                     vals.append(1 - method_data[metric].mean())  # Invert information loss
                 else:
                     vals.append(method_data[metric].mean())
-            vals += vals[:1]
+        vals += vals[:1]
             
             ax.plot(angles, vals, label=method.replace('_', ' ').title(),
                    linewidth=3, color=RADAR_COLORS[method])
