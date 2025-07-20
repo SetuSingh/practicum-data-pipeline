@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "🚀 Starting Secure Data Pipeline..."
+echo "Starting Secure Data Pipeline..."
 echo "==================================="
 
 # Check if Node.js is installed
