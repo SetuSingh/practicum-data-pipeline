@@ -1,0 +1,13 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    # Use localhost for host-running Grafana; inside Docker compose, 'prometheus' hostname will resolve automatically.
+    # If Grafana is running directly on host, uncomment the following line instead:
+    # url: http://localhost:9090
+    isDefault: true
+    uid: prometheus
+    editable: true

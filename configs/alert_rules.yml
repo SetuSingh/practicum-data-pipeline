@@ -1,0 +1,128 @@
+groups:
+  - name: security_alerts
+    rules:
+      - alert: UnauthorizedAccessAttempt
+        expr: increase(unauthorized_access_attempts_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          category: security
+        annotations:
+          summary: "Unauthorized access attempt detected"
+          description: "{{ $value }} unauthorized access attempts detected in the last 5 minutes"
+
+      - alert: IntegrityViolationDetected
+        expr: increase(integrity_violations_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: high
+          category: integrity
+        annotations:
+          summary: "Data integrity violation detected"
+          description: "{{ $value }} integrity violations detected in the last 5 minutes"
+
+      - alert: SecurityBreachEvent
+        expr: increase(breach_detection_events_total[1m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          category: security
+        annotations:
+          summary: "Security breach event detected"
+          description: "{{ $value }} security breach events detected in the last minute"
+
+  - name: compliance_alerts
+    rules:
+      - alert: ComplianceViolationCritical
+        expr: increase(compliance_violations_total{severity="critical"}[10m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          category: compliance
+        annotations:
+          summary: "Critical compliance violation detected"
+          description: "{{ $value }} critical compliance violations detected in the last 10 minutes"
+
+      - alert: ComplianceViolationHigh
+        expr: increase(compliance_violations_total{severity="high"}[30m]) > 5
+        for: 5m
+        labels:
+          severity: high
+          category: compliance
+        annotations:
+          summary: "Multiple high-severity compliance violations"
+          description: "{{ $value }} high-severity compliance violations detected in the last 30 minutes"
+
+  - name: system_alerts
+    rules:
+      - alert: SystemHealthDegraded
+        expr: system_health_status < 1
+        for: 2m
+        labels:
+          severity: warning
+          category: system
+        annotations:
+          summary: "System health degraded"
+          description: "System component {{ $labels.component }} is unhealthy"
+
+      - alert: APILatencyHigh
+        expr: histogram_quantile(0.95, rate(api_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+          category: performance
+        annotations:
+          summary: "High API latency detected"
+          description: "95th percentile API latency is {{ $value }}s, which exceeds 2s threshold"
+
+      - alert: ProcessingThroughputLow
+        expr: processing_throughput_records_per_second < 10
+        for: 10m
+        labels:
+          severity: warning
+          category: performance
+        annotations:
+          summary: "Low processing throughput"
+          description: "Processing throughput for {{ $labels.pipeline_type }} is {{ $value }} records/sec"
+
+      - alert: MemoryUsageHigh
+        expr: memory_usage_bytes / (1024 * 1024 * 1024) > 2
+        for: 5m
+        labels:
+          severity: warning
+          category: resource
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage for {{ $labels.component }} is {{ $value }}GB"
+
+      - alert: CPUUsageHigh
+        expr: cpu_usage_percent > 80
+        for: 5m
+        labels:
+          severity: warning
+          category: resource
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage for {{ $labels.component }} is {{ $value }}%"
+
+  - name: data_quality_alerts
+    rules:
+      - alert: AnonymizationQualityLow
+        expr: anonymization_quality_score < 0.5
+        for: 1m
+        labels:
+          severity: medium
+          category: data_quality
+        annotations:
+          summary: "Low anonymization quality detected"
+          description: "Anonymization quality score for {{ $labels.method }} is {{ $value }}, which is below 0.5 threshold"
+
+      - alert: PrivacyLevelLow
+        expr: privacy_level_score < 0.3
+        for: 1m
+        labels:
+          severity: high
+          category: privacy
+        annotations:
+          summary: "Low privacy level detected"
+          description: "Privacy level for {{ $labels.method }} is {{ $value }}, which is below 0.3 threshold"

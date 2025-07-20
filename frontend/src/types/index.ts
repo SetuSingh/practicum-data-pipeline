@@ -19,7 +19,7 @@ export interface SystemStatus {
 export interface ProcessingJob {
   job_id: string
   filename: string
-  pipeline_type: 'batch' | 'stream' | 'hybrid'
+  pipeline_type: 'batch' | 'stream'
   status: 'pending' | 'processing' | 'completed' | 'failed'
   progress: number
   start_time: string
@@ -74,6 +74,21 @@ export interface DataFile {
   created_at: string
   created_by: string
   is_processed: boolean
+}
+
+export interface DatabaseRecord {
+  id: string
+  record_id: string
+  file_id: string
+  row_number: number
+  original_data: Record<string, any>
+  processed_data: Record<string, any>
+  has_pii: boolean
+  has_violations: boolean
+  violation_types: string[]
+  compliance_score?: number
+  record_hash: string
+  created_at: string
 }
 
 export interface User {

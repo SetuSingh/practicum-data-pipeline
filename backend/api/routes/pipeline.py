@@ -404,6 +404,37 @@ class PipelineOrchestrator:
             print(f"   Records processed: {processing_results['processing_metrics']['total_records']}")
             print(f"   Violations found: {processing_results['processing_metrics']['violations_found']}")
             
+            # ==================== PROMETHEUS METRICS ====================
+            try:
+                from src.monitoring.prometheus_metrics import metrics_collector
+
+                metrics_collector.track_processing_performance(
+                    pipeline_type='batch',
+                    duration=processing_results['pure_processing_time'],
+                    records_count=processing_results['processing_metrics']['total_records'],
+                    anonymization_method=anonymization_config.method.value if anonymization_config else 'none'
+                )
+            except Exception as metrics_err:
+                print(f"⚠️  Unable to record Prometheus processing metrics: {metrics_err}")
+
+            # Push metrics to Prometheus pushgateway for batch jobs
+            try:
+                from src.common.pushgateway_client import pushgateway_client
+                metrics = processing_results['processing_metrics']
+                metrics_to_push = {
+                    'processing_time': processing_results['pure_processing_time'],
+                    'throughput': metrics['records_per_second'],
+                    'total_records': metrics['total_records'],
+                    'violations': metrics['violations_found'],
+                    'violation_rate': metrics['violations_found']/metrics['total_records'] if metrics['total_records'] > 0 else 0,
+                    'records_per_second': metrics['records_per_second'],
+                    'anonymization_method': anonymization_config.method.value if anonymization_config else 'k_anonymity'
+                }
+                pushgateway_client.push_batch_metrics(metrics_to_push)
+                print("📊 Metrics pushed to Prometheus pushgateway")
+            except Exception as e:
+                print(f"⚠️ Failed to push metrics to pushgateway: {e}")
+             
             # Clean up Spark session after all operations are complete
             if processor and hasattr(processor, 'stop'):
                 processor.stop()
@@ -708,7 +739,7 @@ class PipelineOrchestrator:
                         topic_name,
                         bootstrap_servers=['localhost:9093'],
                         auto_offset_reset='earliest',  # Start from beginning to catch our messages
-                        consumer_timeout_ms=5000,   # 5 second timeout for reliable processing
+                        consumer_timeout_ms=15000,  # 15 second timeout for reliable processing
                         value_deserializer=lambda x: json.loads(x.decode('utf-8')),
                         group_id=f'stream-consumer-{job_id}',
                         enable_auto_commit=True,
@@ -883,6 +914,25 @@ class PipelineOrchestrator:
             print(f"   Records processed: {total_records}")
             print(f"   Violations found: {violations_found}")
             print(f"   Average latency: {avg_latency_ms:.2f}ms")
+
+            # Push metrics to Prometheus pushgateway for stream jobs
+            try:
+                from src.common.pushgateway_client import pushgateway_client
+                metrics_to_push = {
+                    'processing_time': pure_processing_time,
+                    'throughput': records_per_second,
+                    'total_records': total_records,
+                    'violations': violations_found,
+                    'violation_rate': violations_found/total_records if total_records > 0 else 0,
+                    'records_per_second': records_per_second,
+                    'anonymization_method': 'tokenization',  # Default for stream
+                    'average_latency_ms': avg_latency_ms,
+                    'pipeline_type': 'stream'
+                }
+                pushgateway_client.push_batch_metrics(metrics_to_push, 'stream_instance')
+                print("📊 Stream metrics pushed to Prometheus pushgateway")
+            except Exception as e:
+                print(f"⚠️ Failed to push stream metrics to pushgateway: {e}")
             
             return complete_metrics
             
@@ -1039,7 +1089,7 @@ class PipelineOrchestrator:
                         topic_name,
                         bootstrap_servers=['localhost:9093'],
                         auto_offset_reset='earliest',
-                        consumer_timeout_ms=5000,   # 5 second timeout for reliable processing
+                        consumer_timeout_ms=15000,  # 15 second timeout for reliable processing
                         value_deserializer=lambda x: json.loads(x.decode('utf-8')),
                         group_id=f'hybrid-consumer-{job_id}',
                         enable_auto_commit=True,
@@ -1229,6 +1279,27 @@ class PipelineOrchestrator:
             print(f"   Violations found: {violations_found}")
             print(f"   Average latency: {avg_latency_ms:.2f}ms")
             print(f"   🎯 Routing: {batch_routed} → batch, {stream_routed} → stream")
+
+            # Push metrics to Prometheus pushgateway for hybrid jobs
+            try:
+                from src.common.pushgateway_client import pushgateway_client
+                metrics_to_push = {
+                    'processing_time': pure_processing_time,
+                    'throughput': records_per_second,
+                    'total_records': total_records,
+                    'violations': violations_found,
+                    'violation_rate': violations_found/total_records if total_records > 0 else 0,
+                    'records_per_second': records_per_second,
+                    'anonymization_method': anonymization_config.method.value if anonymization_config else 'differential_privacy',
+                    'average_latency_ms': avg_latency_ms,
+                    'pipeline_type': 'hybrid',
+                    'batch_routed': batch_routed,
+                    'stream_routed': stream_routed
+                }
+                pushgateway_client.push_batch_metrics(metrics_to_push, 'hybrid_instance')
+                print("📊 Hybrid metrics pushed to Prometheus pushgateway")
+            except Exception as e:
+                print(f"⚠️ Failed to push hybrid metrics to pushgateway: {e}")
             
             return complete_metrics
             
@@ -1424,524 +1495,532 @@ stream_manager = OptimizedStreamManager()
 # END OPTIMIZED ARCHITECTURE  
 # ================================
 
-@bp.route('/process', methods=['POST'])
-def process_file():
-    """Process uploaded file through specified pipeline with anonymization parameters"""
-    try:
-        from app import processing_jobs, db_connector
-        
-        data = request.json
-        job_id = data.get('job_id')
-        filepath = data.get('filepath')
-        pipeline_type = data.get('pipeline_type', 'batch')
-        
-        # Extract anonymization parameters
-        anonymization_technique = data.get('anonymization_technique', 'k_anonymity')
-        k_value = data.get('k_value', 5)
-        epsilon = data.get('epsilon', 1.0)
-        key_size = data.get('key_size', 256)
-        
-        if not job_id or job_id not in processing_jobs:
-            return jsonify({'error': 'Invalid job ID'}), 400
-        
-        if not filepath or not os.path.exists(filepath):
-            return jsonify({'error': 'File not found'}), 400
-        
-        job = processing_jobs[job_id]
-        
-        # Create anonymization configuration based on technique
-        try:
-            if anonymization_technique == 'k_anonymity':
-                anonymization_config = AnonymizationConfig(
-                    method=AnonymizationMethod.K_ANONYMITY,
-                    k_value=int(k_value)
-                )
-            elif anonymization_technique == 'differential_privacy':
-                anonymization_config = AnonymizationConfig(
-                    method=AnonymizationMethod.DIFFERENTIAL_PRIVACY,
-                    epsilon=float(epsilon)
-                )
-            elif anonymization_technique == 'tokenization':
-                anonymization_config = AnonymizationConfig(
-                    method=AnonymizationMethod.TOKENIZATION,
-                    key_length=int(key_size)
-                )
-            else:
-                return jsonify({'error': f'Invalid anonymization technique: {anonymization_technique}'}), 400
-        except (ValueError, TypeError) as param_error:
-            return jsonify({'error': f'Invalid anonymization parameters: {str(param_error)}'}), 400
-        
-        # Process through specified pipeline with anonymization config
-        metrics = orchestrator.process_file(job_id, filepath, pipeline_type, 
-                                          current_app.config['PROCESSED_FOLDER'], 
-                                          anonymization_config, job)
-        
-        return jsonify({
-            'status': 'success',
-            'message': f'File processed through {pipeline_type} pipeline with {anonymization_technique}',
-            'metrics': metrics,
-            'anonymization_config': {
-                'technique': anonymization_technique,
-                'parameters': {
-                    'k_value': k_value if anonymization_technique == 'k_anonymity' else None,
-                    'epsilon': epsilon if anonymization_technique == 'differential_privacy' else None,
-                    'key_size': key_size if anonymization_technique == 'tokenization' else None
-                }
-            }
-        })
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+# ================================
+# COMMENTED OUT PIPELINE ROUTES - FOR TESTING
+# ================================
 
-@bp.route('/metrics', methods=['GET'])
-def get_pipeline_metrics():
-    """Get research evaluation metrics"""
-    try:
-        pipeline_type = request.args.get('pipeline_type')
-        metrics = orchestrator.get_research_metrics(pipeline_type)
-        
-        return jsonify({
-            'status': 'success',
-            'data': metrics
-        })
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+# @bp.route('/process', methods=['POST'])
+# def process_file():
+#     """Process uploaded file through specified pipeline with anonymization parameters"""
+#     try:
+#         from app import processing_jobs, db_connector
+#         
+#         data = request.json
+#         job_id = data.get('job_id')
+#         filepath = data.get('filepath')
+#         pipeline_type = data.get('pipeline_type', 'batch')
+#         
+#         # Extract anonymization parameters
+#         anonymization_technique = data.get('anonymization_technique', 'k_anonymity')
+#         k_value = data.get('k_value', 5)
+#         epsilon = data.get('epsilon', 1.0)
+#         key_size = data.get('key_size', 256)
+#         
+#         if not job_id or job_id not in processing_jobs:
+#             return jsonify({'error': 'Invalid job ID'}), 400
+#         
+#         if not filepath or not os.path.exists(filepath):
+#             return jsonify({'error': 'File not found'}), 400
+#         
+#         job = processing_jobs[job_id]
+#         
+#         # Create anonymization configuration based on technique
+#         try:
+#             if anonymization_technique == 'k_anonymity':
+#                 anonymization_config = AnonymizationConfig(
+#                     method=AnonymizationMethod.K_ANONYMITY,
+#                     k_value=int(k_value)
+#                 )
+#             elif anonymization_technique == 'differential_privacy':
+#                 anonymization_config = AnonymizationConfig(
+#                     method=AnonymizationMethod.DIFFERENTIAL_PRIVACY,
+#                     epsilon=float(epsilon)
+#                 )
+#             elif anonymization_technique == 'tokenization':
+#                 anonymization_config = AnonymizationConfig(
+#                     method=AnonymizationMethod.TOKENIZATION,
+#                     key_length=int(key_size)
+#                 )
+#             else:
+#                 return jsonify({'error': f'Invalid anonymization technique: {anonymization_technique}'}), 400
+#         except (ValueError, TypeError) as param_error:
+#             return jsonify({'error': f'Invalid anonymization parameters: {str(param_error)}'}), 400
+#         
+#         # Process through specified pipeline with anonymization config
+#         metrics = orchestrator.process_file(job_id, filepath, pipeline_type, 
+#                                           current_app.config['PROCESSED_FOLDER'], 
+#                                           anonymization_config, job)
+#         
+#         return jsonify({
+#             'status': 'success',
+#             'message': f'File processed through {pipeline_type} pipeline with {anonymization_technique}',
+#             'metrics': metrics,
+#             'anonymization_config': {
+#                 'technique': anonymization_technique,
+#                 'parameters': {
+#                     'k_value': k_value if anonymization_technique == 'k_anonymity' else None,
+#                     'epsilon': epsilon if anonymization_technique == 'differential_privacy' else None,
+#                     'key_size': key_size if anonymization_technique == 'tokenization' else None
+#                 }
+#             }
+#         })
+#         
+#     except Exception as e:
+#         return jsonify({'error': str(e)}), 500
 
-@bp.route('/metrics/comparison', methods=['GET'])
-def get_comparative_metrics():
-    """Get comparative metrics for research evaluation"""
-    try:
-        all_metrics = orchestrator.get_research_metrics()
-        
-        # Calculate comparative statistics
-        comparison = {
-            'throughput_comparison': {},
-            'latency_comparison': {},
-            'violation_detection_comparison': {}
-        }
-        
-        for pipeline_type, metrics_list in all_metrics['all_metrics'].items():
-            if metrics_list:
-                throughputs = [m['throughput_records_per_second'] for m in metrics_list]
-                violation_rates = [m['violation_rate'] for m in metrics_list]
-                
-                comparison['throughput_comparison'][pipeline_type] = {
-                    'average': sum(throughputs) / len(throughputs),
-                    'max': max(throughputs),
-                    'min': min(throughputs)
-                }
-                
-                comparison['violation_detection_comparison'][pipeline_type] = {
-                    'average_violation_rate': sum(violation_rates) / len(violation_rates),
-                    'total_jobs': len(metrics_list)
-                }
-                
-                # Add latency metrics for stream and hybrid
-                if pipeline_type in ['stream', 'hybrid']:
-                    latencies = [m.get('average_latency_seconds', 0) for m in metrics_list]
-                    comparison['latency_comparison'][pipeline_type] = {
-                        'average_latency': sum(latencies) / len(latencies),
-                        'max_latency': max(latencies),
-                        'min_latency': min(latencies)
-                    }
-        
-        return jsonify({
-            'status': 'success',
-            'comparison': comparison,
-            'generated_at': datetime.now().isoformat()
-        })
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+# @bp.route('/metrics', methods=['GET'])
+# def get_pipeline_metrics():
+#     """Get research evaluation metrics"""
+#     try:
+#         pipeline_type = request.args.get('pipeline_type')
+#         metrics = orchestrator.get_research_metrics(pipeline_type)
+#         
+#         return jsonify({
+#             'status': 'success',
+#             'data': metrics
+#         })
+#         
+#     except Exception as e:
+#         return jsonify({'error': str(e)}), 500
 
-@bp.route('/metrics/rq2-anonymization', methods=['GET'])
-def get_rq2_anonymization_metrics():
-    """
-    Get comprehensive anonymization metrics for RQ2 research analysis
-    
-    This endpoint aggregates anonymization performance data across all pipelines
-    and techniques for comprehensive research evaluation and comparison.
-    """
-    try:
-        from app import db_connector
-        
-        # Query database for recent processing jobs with anonymization data
-        jobs_query = """
-        SELECT 
-            dpj.job_id,
-            dpj.file_id,
-            dpj.pipeline_type,
-            dpj.status,
-            dpj.start_time,
-            dpj.end_time,
-            dpj.records_processed,
-            dpj.results,
-            df.filename,
-            df.file_size,
-            COUNT(dcv.id) as violations_count
-        FROM data_processing_jobs dpj
-        LEFT JOIN data_files df ON dpj.file_id = df.id
-        LEFT JOIN data_compliance_violations dcv ON df.id = dcv.file_id
-        WHERE dpj.status = 'completed'
-        AND dpj.start_time >= NOW() - INTERVAL '24 HOURS'
-        GROUP BY dpj.job_id, dpj.file_id, dpj.pipeline_type, dpj.status, 
-                 dpj.start_time, dpj.end_time, dpj.records_processed, 
-                 dpj.results, df.filename, df.file_size
-        ORDER BY dpj.start_time DESC
-        """
-        
-        jobs_result = db_connector.execute_query(jobs_query)
-        
-        # Aggregate anonymization metrics by technique and pipeline
-        anonymization_analysis = {
-            'techniques_comparison': {
-                'k_anonymity': {'jobs': 0, 'avg_processing_time': 0, 'avg_throughput': 0, 'privacy_levels': []},
-                'differential_privacy': {'jobs': 0, 'avg_processing_time': 0, 'avg_throughput': 0, 'privacy_levels': []},
-                'tokenization': {'jobs': 0, 'avg_processing_time': 0, 'avg_throughput': 0, 'privacy_levels': []}
-            },
-            'pipeline_performance': {
-                'batch': {'anonymization_overhead': [], 'violation_detection_rate': []},
-                'stream': {'anonymization_overhead': [], 'violation_detection_rate': []}, 
-                'hybrid': {'anonymization_overhead': [], 'violation_detection_rate': []}
-            },
-            'parameter_analysis': {
-                'k_values': {},        # k-anonymity parameter analysis
-                'epsilon_values': {},  # differential privacy parameter analysis
-                'key_sizes': {}        # tokenization parameter analysis
-            },
-            'quality_metrics': {
-                'information_loss_by_technique': {},
-                'utility_preservation_by_pipeline': {},
-                'privacy_level_distribution': {}
-            }
-        }
-        
-        # Process each job's anonymization metrics
-        for job in jobs_result:
-            if job.get('results'):
-                try:
-                    job_results = json.loads(job['results']) if isinstance(job['results'], str) else job['results']
-                    
-                    # Extract anonymization configuration if present
-                    anon_config = job_results.get('anonymization_config', {})
-                    technique = anon_config.get('technique', 'unknown')
-                    parameters = anon_config.get('parameters', {})
-                    
-                    # Calculate key metrics
-                    processing_time = (job['end_time'] - job['start_time']).total_seconds() if job['end_time'] else 0
-                    throughput = job['records_processed'] / processing_time if processing_time > 0 else 0
-                    violation_rate = job['violations_count'] / job['records_processed'] if job['records_processed'] > 0 else 0
-                    
-                    # Update technique-specific metrics
-                    if technique in anonymization_analysis['techniques_comparison']:
-                        tech_metrics = anonymization_analysis['techniques_comparison'][technique]
-                        tech_metrics['jobs'] += 1
-                        tech_metrics['avg_processing_time'] += processing_time
-                        tech_metrics['avg_throughput'] += throughput
-                        
-                        # Calculate privacy level based on technique and parameters
-                        privacy_level = 0.5  # Default
-                        if technique == 'k_anonymity' and parameters.get('k_value'):
-                            privacy_level = min(1.0, parameters['k_value'] / 20.0)
-                        elif technique == 'differential_privacy' and parameters.get('epsilon'):
-                            privacy_level = max(0.1, 1.0 - parameters['epsilon'])
-                        elif technique == 'tokenization':
-                            privacy_level = 0.7
-                        
-                        tech_metrics['privacy_levels'].append(privacy_level)
-                    
-                    # Update pipeline-specific metrics
-                    pipeline = job['pipeline_type']
-                    if pipeline in anonymization_analysis['pipeline_performance']:
-                        pipe_metrics = anonymization_analysis['pipeline_performance'][pipeline]
-                        pipe_metrics['violation_detection_rate'].append(violation_rate)
-                        
-                        # Estimate anonymization overhead (simplified)
-                        base_processing_rate = 1000  # records/second baseline
-                        overhead = max(0, (base_processing_rate - throughput) / base_processing_rate)
-                        pipe_metrics['anonymization_overhead'].append(overhead)
-                    
-                    # Parameter-specific analysis
-                    if technique == 'k_anonymity' and parameters.get('k_value'):
-                        k_val = str(parameters['k_value'])
-                        if k_val not in anonymization_analysis['parameter_analysis']['k_values']:
-                            anonymization_analysis['parameter_analysis']['k_values'][k_val] = []
-                        anonymization_analysis['parameter_analysis']['k_values'][k_val].append({
-                            'throughput': throughput,
-                            'privacy_level': privacy_level,
-                            'processing_time': processing_time
-                        })
-                    
-                except (json.JSONDecodeError, KeyError) as e:
-                    print(f"Error processing job results: {e}")
-                    continue
-        
-        # Calculate averages and statistical summaries
-        for technique, metrics in anonymization_analysis['techniques_comparison'].items():
-            if metrics['jobs'] > 0:
-                metrics['avg_processing_time'] /= metrics['jobs']
-                metrics['avg_throughput'] /= metrics['jobs']
-                metrics['avg_privacy_level'] = sum(metrics['privacy_levels']) / len(metrics['privacy_levels']) if metrics['privacy_levels'] else 0
-                metrics['privacy_std'] = np.std(metrics['privacy_levels']) if len(metrics['privacy_levels']) > 1 else 0
-        
-        # Pipeline performance summaries
-        for pipeline, metrics in anonymization_analysis['pipeline_performance'].items():
-            if metrics['violation_detection_rate']:
-                metrics['avg_violation_detection'] = sum(metrics['violation_detection_rate']) / len(metrics['violation_detection_rate'])
-                metrics['avg_anonymization_overhead'] = sum(metrics['anonymization_overhead']) / len(metrics['anonymization_overhead']) if metrics['anonymization_overhead'] else 0
-        
-        # Add research insights
-        research_insights = {
-            'best_privacy_technique': max(anonymization_analysis['techniques_comparison'], 
-                                        key=lambda x: anonymization_analysis['techniques_comparison'][x].get('avg_privacy_level', 0)),
-            'fastest_pipeline': max(anonymization_analysis['pipeline_performance'],
-                                  key=lambda x: len(anonymization_analysis['pipeline_performance'][x]['violation_detection_rate'])),
-            'optimal_parameters': {
-                'k_anonymity': 'k=5 (balanced privacy-utility)',
-                'differential_privacy': 'ε=1.0 (moderate privacy)',
-                'tokenization': '256-bit keys (standard security)'
-            },
-            'performance_ranking': sorted(
-                anonymization_analysis['techniques_comparison'].items(),
-                key=lambda x: x[1].get('avg_throughput', 0),
-                reverse=True
-            )
-        }
-        
-        return jsonify({
-            'status': 'success',
-            'anonymization_analysis': anonymization_analysis,
-            'research_insights': research_insights,
-            'data_collection_period': '24 hours',
-            'total_jobs_analyzed': sum(metrics['jobs'] for metrics in anonymization_analysis['techniques_comparison'].values()),
-            'generated_at': datetime.now().isoformat()
-        })
-        
-    except Exception as e:
-        return jsonify({'error': f'RQ2 metrics collection failed: {str(e)}'}), 500
+# @bp.route('/metrics/comparison', methods=['GET'])
+# def get_comparative_metrics():
+#     """Get comparative metrics for research evaluation"""
+#     try:
+#         all_metrics = orchestrator.get_research_metrics()
+#         
+#         # Calculate comparative statistics
+#         comparison = {
+#             'throughput_comparison': {},
+#             'latency_comparison': {},
+#             'violation_detection_comparison': {}
+#         }
+#         
+#         for pipeline_type, metrics_list in all_metrics['all_metrics'].items():
+#             if metrics_list:
+#                 throughputs = [m['throughput_records_per_second'] for m in metrics_list]
+#                 violation_rates = [m['violation_rate'] for m in metrics_list]
+#                 
+#                 comparison['throughput_comparison'][pipeline_type] = {
+#                     'average': sum(throughputs) / len(throughputs),
+#                     'max': max(throughputs),
+#                     'min': min(throughputs)
+#                 }
+#                 
+#                 comparison['violation_detection_comparison'][pipeline_type] = {
+#                     'average_violation_rate': sum(violation_rates) / len(violation_rates),
+#                     'total_jobs': len(metrics_list)
+#                 }
+#                 
+#                 # Add latency metrics for stream and hybrid
+#                 if pipeline_type in ['stream', 'hybrid']:
+#                     latencies = [m.get('average_latency_seconds', 0) for m in metrics_list]
+#                     comparison['latency_comparison'][pipeline_type] = {
+#                         'average_latency': sum(latencies) / len(latencies),
+#                         'max_latency': max(latencies),
+#                         'min_latency': min(latencies)
+#                     }
+#         
+#         return jsonify({
+#             'status': 'success',
+#             'comparison': comparison,
+#             'generated_at': datetime.now().isoformat()
+#         })
+#         
+#     except Exception as e:
+#         return jsonify({'error': str(e)}), 500
 
-@bp.route('/processors/status', methods=['GET'])
-def get_processor_status():
-    """Get status of all pipeline processors"""
-    try:
-        status = {}
-        
-        for pipeline_type in ['batch', 'stream', 'hybrid']:
-            try:
-                processor = orchestrator.get_processor(pipeline_type)
-                status[pipeline_type] = {
-                    'available': True,
-                    'type': type(processor).__name__,
-                    'initialized': True
-                }
-            except Exception as e:
-                status[pipeline_type] = {
-                    'available': False,
-                    'error': str(e),
-                    'initialized': False
-                }
-        
-        return jsonify({
-            'status': 'success',
-            'processors': status
-        })
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500 
+# @bp.route('/metrics/rq2-anonymization', methods=['GET'])
+# def get_rq2_anonymization_metrics():
+#     """
+#     Get comprehensive anonymization metrics for RQ2 research analysis
+#     
+#     This endpoint aggregates anonymization performance data across all pipelines
+#     and techniques for comprehensive research evaluation and comparison.
+#     """
+#     try:
+#         from app import db_connector
+#         
+#         # Query database for recent processing jobs with anonymization data
+#         jobs_query = """
+#         SELECT 
+#             dpj.job_id,
+#             dpj.file_id,
+#             dpj.pipeline_type,
+#             dpj.status,
+#             dpj.start_time,
+#             dpj.end_time,
+#             dpj.records_processed,
+#             dpj.results,
+#             df.filename,
+#             df.file_size,
+#             COUNT(dcv.id) as violations_count
+#         FROM data_processing_jobs dpj
+#         LEFT JOIN data_files df ON dpj.file_id = df.id
+#         LEFT JOIN data_compliance_violations dcv ON df.id = dcv.file_id
+#         WHERE dpj.status = 'completed'
+#         AND dpj.start_time >= NOW() - INTERVAL '24 HOURS'
+#         GROUP BY dpj.job_id, dpj.file_id, dpj.pipeline_type, dpj.status, 
+#                  dpj.start_time, dpj.end_time, dpj.records_processed, 
+#                  dpj.results, df.filename, df.file_size
+#         ORDER BY dpj.start_time DESC
+#         """
+#         
+#         jobs_result = db_connector.execute_query(jobs_query)
+#         
+#         # Aggregate anonymization metrics by technique and pipeline
+#         anonymization_analysis = {
+#             'techniques_comparison': {
+#                 'k_anonymity': {'jobs': 0, 'avg_processing_time': 0, 'avg_throughput': 0, 'privacy_levels': []},
+#                 'differential_privacy': {'jobs': 0, 'avg_processing_time': 0, 'avg_throughput': 0, 'privacy_levels': []},
+#                 'tokenization': {'jobs': 0, 'avg_processing_time': 0, 'avg_throughput': 0, 'privacy_levels': []}
+#             },
+#             'pipeline_performance': {
+#                 'batch': {'anonymization_overhead': [], 'violation_detection_rate': []},
+#                 'stream': {'anonymization_overhead': [], 'violation_detection_rate': []}, 
+#                 'hybrid': {'anonymization_overhead': [], 'violation_detection_rate': []}
+#             },
+#             'parameter_analysis': {
+#                 'k_values': {},        # k-anonymity parameter analysis
+#                 'epsilon_values': {},  # differential privacy parameter analysis
+#                 'key_sizes': {}        # tokenization parameter analysis
+#             },
+#             'quality_metrics': {
+#                 'information_loss_by_technique': {},
+#                 'utility_preservation_by_pipeline': {},
+#                 'privacy_level_distribution': {}
+#             }
+#         }
+#         
+#         # Process each job's anonymization metrics
+#         for job in jobs_result:
+#             if job.get('results'):
+#                 try:
+#                     job_results = json.loads(job['results']) if isinstance(job['results'], str) else job['results']
+#                     
+#                     # Extract anonymization configuration if present
+#                     anon_config = job_results.get('anonymization_config', {})
+#                     technique = anon_config.get('technique', 'unknown')
+#                     parameters = anon_config.get('parameters', {})
+#                     
+#                     # Calculate key metrics
+#                     processing_time = (job['end_time'] - job['start_time']).total_seconds() if job['end_time'] else 0
+#                     throughput = job['records_processed'] / processing_time if processing_time > 0 else 0
+#                     violation_rate = job['violations_count'] / job['records_processed'] if job['records_processed'] > 0 else 0
+#                     
+#                     # Update technique-specific metrics
+#                     if technique in anonymization_analysis['techniques_comparison']:
+#                         tech_metrics = anonymization_analysis['techniques_comparison'][technique]
+#                         tech_metrics['jobs'] += 1
+#                         tech_metrics['avg_processing_time'] += processing_time
+#                         tech_metrics['avg_throughput'] += throughput
+#                         
+#                         # Calculate privacy level based on technique and parameters
+#                         privacy_level = 0.5  # Default
+#                         if technique == 'k_anonymity' and parameters.get('k_value'):
+#                             privacy_level = min(1.0, parameters['k_value'] / 20.0)
+#                         elif technique == 'differential_privacy' and parameters.get('epsilon'):
+#                             privacy_level = max(0.1, 1.0 - parameters['epsilon'])
+#                         elif technique == 'tokenization':
+#                             privacy_level = 0.7
+#                         
+#                         tech_metrics['privacy_levels'].append(privacy_level)
+#                     
+#                     # Update pipeline-specific metrics
+#                     pipeline = job['pipeline_type']
+#                     if pipeline in anonymization_analysis['pipeline_performance']:
+#                         pipe_metrics = anonymization_analysis['pipeline_performance'][pipeline]
+#                         pipe_metrics['violation_detection_rate'].append(violation_rate)
+#                         
+#                         # Estimate anonymization overhead (simplified)
+#                         base_processing_rate = 1000  # records/second baseline
+#                         overhead = max(0, (base_processing_rate - throughput) / base_processing_rate)
+#                         pipe_metrics['anonymization_overhead'].append(overhead)
+#                     
+#                     # Parameter-specific analysis
+#                     if technique == 'k_anonymity' and parameters.get('k_value'):
+#                         k_val = str(parameters['k_value'])
+#                         if k_val not in anonymization_analysis['parameter_analysis']['k_values']:
+#                             anonymization_analysis['parameter_analysis']['k_values'][k_val] = []
+#                         anonymization_analysis['parameter_analysis']['k_values'][k_val].append({
+#                             'throughput': throughput,
+#                             'privacy_level': privacy_level,
+#                             'processing_time': processing_time
+#                         })
+#                     
+#                 except (json.JSONDecodeError, KeyError) as e:
+#                     print(f"Error processing job results: {e}")
+#                     continue
+#         
+#         # Calculate averages and statistical summaries
+#         for technique, metrics in anonymization_analysis['techniques_comparison'].items():
+#             if metrics['jobs'] > 0:
+#                 metrics['avg_processing_time'] /= metrics['jobs']
+#                 metrics['avg_throughput'] /= metrics['jobs']
+#                 metrics['avg_privacy_level'] = sum(metrics['privacy_levels']) / len(metrics['privacy_levels']) if metrics['privacy_levels'] else 0
+#                 metrics['privacy_std'] = np.std(metrics['privacy_levels']) if len(metrics['privacy_levels']) > 1 else 0
+#         
+#         # Pipeline performance summaries
+#         for pipeline, metrics in anonymization_analysis['pipeline_performance'].items():
+#             if metrics['violation_detection_rate']:
+#                 metrics['avg_violation_detection'] = sum(metrics['violation_detection_rate']) / len(metrics['violation_detection_rate'])
+#                 metrics['avg_anonymization_overhead'] = sum(metrics['anonymization_overhead']) / len(metrics['anonymization_overhead']) if metrics['anonymization_overhead'] else 0
+#         
+#         # Add research insights
+#         research_insights = {
+#             'best_privacy_technique': max(anonymization_analysis['techniques_comparison'], 
+#                                         key=lambda x: anonymization_analysis['techniques_comparison'][x].get('avg_privacy_level', 0)),
+#             'fastest_pipeline': max(anonymization_analysis['pipeline_performance'],
+#                                   key=lambda x: len(anonymization_analysis['pipeline_performance'][x]['violation_detection_rate'])),
+#             'optimal_parameters': {
+#                 'k_anonymity': 'k=5 (balanced privacy-utility)',
+#                 'differential_privacy': 'ε=1.0 (moderate privacy)',
+#                 'tokenization': '256-bit keys (standard security)'
+#             },
+#             'performance_ranking': sorted(
+#                 anonymization_analysis['techniques_comparison'].items(),
+#                 key=lambda x: x[1].get('avg_throughput', 0),
+#                 reverse=True
+#             )
+#         }
+#         
+#         return jsonify({
+#             'status': 'success',
+#             'anonymization_analysis': anonymization_analysis,
+#             'research_insights': research_insights,
+#             'data_collection_period': '24 hours',
+#             'total_jobs_analyzed': sum(metrics['jobs'] for metrics in anonymization_analysis['techniques_comparison'].values()),
+#             'generated_at': datetime.now().isoformat()
+#         })
+#         
+#     except Exception as e:
+#         return jsonify({'error': f'RQ2 metrics collection failed: {str(e)}'}), 500
 
-@bp.route('/test/real-vs-simulated', methods=['POST'])
-def test_real_vs_simulated():
-    """Test real vs simulated processing for research evaluation"""
-    try:
-        data = request.json
-        filepath = data.get('filepath')
-        
-        if not filepath or not os.path.exists(filepath):
-            return jsonify({'error': 'File not found'}), 400
-        
-        print("🧪 Testing REAL vs SIMULATED processing...")
-        
-        results = {}
-        
-        # Test BATCH (always real)
-        print("\n🔄 Testing BATCH (real Spark)...")
-        try:
-            batch_processor = orchestrator.get_processor('batch')
-            job_id = str(uuid.uuid4())[:8]
-            start_time = time.time()
-            
-            # Create default anonymization config for testing
-            default_anon_config = AnonymizationConfig(method=AnonymizationMethod.K_ANONYMITY, k_value=5)
-            batch_metrics = orchestrator._process_batch(batch_processor, filepath, f"batch-test-{job_id}", start_time, current_app.config['PROCESSED_FOLDER'], default_anon_config)
-            results['batch'] = {
-                'status': 'success',
-                'mode': 'real_spark',
-                'metrics': batch_metrics
-            }
-        except Exception as e:
-            results['batch'] = {
-                'status': 'failed',
-                'mode': 'real_spark',
-                'error': str(e)
-            }
-        
-        # Test STREAM (real vs simulated)
-        print("\n🔄 Testing STREAM (real Kafka vs simulated)...")
-        stream_processor = orchestrator.get_processor('stream')
-        
-        # Try real streaming
-        try:
-            job_id = str(uuid.uuid4())[:8]
-            start_time = time.time()
-            
-            real_stream_metrics = orchestrator._process_stream_real(stream_processor, filepath, f"stream-real-{job_id}", start_time, current_app.config['PROCESSED_FOLDER'], AnonymizationConfig())
-            results['stream_real'] = {
-                'status': 'success',
-                'mode': 'real_kafka_streaming',
-                'metrics': real_stream_metrics
-            }
-        except Exception as e:
-            results['stream_real'] = {
-                'status': 'failed',
-                'mode': 'real_kafka_streaming',
-                'error': str(e)
-            }
-        
-        # Note: Simulated streaming removed - only real Kafka streaming supported
-        
-        # Test HYBRID (real vs simulated)
-        print("\n🔄 Testing HYBRID (real Kafka routing vs simulated)...")
-        hybrid_processor = orchestrator.get_processor('hybrid')
-        
-        # Try real hybrid
-        try:
-            job_id = str(uuid.uuid4())[:8]
-            start_time = time.time()
-            
-            real_hybrid_metrics = orchestrator._process_hybrid_real(hybrid_processor, filepath, f"hybrid-real-{job_id}", start_time, current_app.config['PROCESSED_FOLDER'], AnonymizationConfig())
-            results['hybrid_real'] = {
-                'status': 'success',
-                'mode': 'real_kafka_intelligent_routing',
-                'metrics': real_hybrid_metrics
-            }
-        except Exception as e:
-            results['hybrid_real'] = {
-                'status': 'failed',
-                'mode': 'real_kafka_intelligent_routing',
-                'error': str(e)
-            }
-        
-        # Note: Simulated hybrid processing removed - only real Kafka routing supported
-        
-        # Generate comparison report
-        comparison = {
-            'test_file': filepath,
-            'timestamp': datetime.now().isoformat(),
-            'results': results,
-            'summary': {
-                'batch_real_available': results['batch']['status'] == 'success',
-                'stream_real_available': results['stream_real']['status'] == 'success',
-                'stream_simulated_available': results['stream_simulated']['status'] == 'success',
-                'hybrid_real_available': results['hybrid_real']['status'] == 'success',
-                'hybrid_simulated_available': results['hybrid_simulated']['status'] == 'success'
-            }
-        }
-        
-        # Performance comparison if both modes available
-        if (results['stream_real']['status'] == 'success' and 
-            results['stream_simulated']['status'] == 'success'):
-            
-            real_throughput = results['stream_real']['metrics']['throughput_records_per_second']
-            sim_throughput = results['stream_simulated']['metrics']['throughput_records_per_second']
-            
-            comparison['performance_comparison'] = {
-                'stream_real_throughput': real_throughput,
-                'stream_simulated_throughput': sim_throughput,
-                'throughput_difference_pct': ((real_throughput - sim_throughput) / sim_throughput * 100) if sim_throughput > 0 else 0
-            }
-        
-        return jsonify({
-            'status': 'success',
-            'comparison': comparison
-        })
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+# @bp.route('/processors/status', methods=['GET'])
+# def get_processor_status():
+#     """Get status of all pipeline processors"""
+#     try:
+#         status = {}
+#         
+#         for pipeline_type in ['batch', 'stream', 'hybrid']:
+#             try:
+#                 processor = orchestrator.get_processor(pipeline_type)
+#                 status[pipeline_type] = {
+#                     'available': True,
+#                     'type': type(processor).__name__,
+#                     'initialized': True
+#                 }
+#             except Exception as e:
+#                 status[pipeline_type] = {
+#                     'available': False,
+#                     'error': str(e),
+#                     'initialized': False
+#                 }
+#         
+#         return jsonify({
+#             'status': 'success',
+#             'processors': status
+#         })
+#         
+#     except Exception as e:
+#         return jsonify({'error': str(e)}), 500 
 
-@bp.route('/modes/available', methods=['GET'])
-def get_available_modes():
-    """Get available processing modes for each pipeline type"""
-    try:
-        modes = {
-            'batch': {
-                'real_spark': {
-                    'available': True,
-                    'description': 'Apache Spark distributed processing',
-                    'requirements': ['Spark environment', 'Java runtime'],
-                    'test_endpoint': '/api/pipeline/test/real-vs-simulated'
-                }
-            },
-            'stream': {
-                'real_kafka_streaming': {
-                    'available': None,  # Will test
-                    'description': 'Real Kafka streaming with Storm processing',
-                    'requirements': ['Kafka broker', 'Topic creation permissions'],
-                    'test_endpoint': '/api/pipeline/test/real-vs-simulated'
-                },
-                'simulated_streaming': {
-                    'available': True,
-                    'description': 'File-based record-by-record processing simulation',
-                    'requirements': ['None'],
-                    'test_endpoint': '/api/pipeline/test/real-vs-simulated'
-                }
-            },
-            'hybrid': {
-                'real_kafka_intelligent_routing': {
-                    'available': None,  # Will test
-                    'description': 'Real Kafka with Flink intelligent routing',
-                    'requirements': ['Kafka broker', 'Topic creation permissions'],
-                    'test_endpoint': '/api/pipeline/test/real-vs-simulated'
-                },
-                'simulated_intelligent_routing': {
-                    'available': True,
-                    'description': 'File-based processing with real routing logic',
-                    'requirements': ['None'],
-                    'test_endpoint': '/api/pipeline/test/real-vs-simulated'
-                }
-            }
-        }
-        
-        # Test Kafka availability
-        try:
-            from kafka import KafkaProducer
-            producer = KafkaProducer(
-                bootstrap_servers=['localhost:9093'],
-                retries=1,
-                request_timeout_ms=5000
-            )
-            producer.close()
-            kafka_available = True
-        except Exception:
-            kafka_available = False
-        
-        # Update availability based on tests
-        modes['stream']['real_kafka_streaming']['available'] = kafka_available
-        modes['hybrid']['real_kafka_intelligent_routing']['available'] = kafka_available
-        
-        return jsonify({
-            'status': 'success',
-            'kafka_available': kafka_available,
-            'modes': modes,
-            'recommendations': {
-                'for_research': 'Use real modes when available for accurate performance metrics',
-                'for_development': 'Simulated modes work without infrastructure requirements',
-                'setup_kafka': 'Run `brew install kafka` or use Docker for real streaming capabilities'
-            }
-        })
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500 
+# @bp.route('/test/real-vs-simulated', methods=['POST'])
+# def test_real_vs_simulated():
+#     """Test real vs simulated processing for research evaluation"""
+#     try:
+#         data = request.json
+#         filepath = data.get('filepath')
+#         
+#         if not filepath or not os.path.exists(filepath):
+#             return jsonify({'error': 'File not found'}), 400
+#         
+#         print("🧪 Testing REAL vs SIMULATED processing...")
+#         
+#         results = {}
+#         
+#         # Test BATCH (always real)
+#         print("\n🔄 Testing BATCH (real Spark)...")
+#         try:
+#             batch_processor = orchestrator.get_processor('batch')
+#             job_id = str(uuid.uuid4())[:8]
+#             start_time = time.time()
+#             
+#             # Create default anonymization config for testing
+#             default_anon_config = AnonymizationConfig(method=AnonymizationMethod.K_ANONYMITY, k_value=5)
+#             batch_metrics = orchestrator._process_batch(batch_processor, filepath, f"batch-test-{job_id}", start_time, current_app.config['PROCESSED_FOLDER'], default_anon_config)
+#             results['batch'] = {
+#                 'status': 'success',
+#                 'mode': 'real_spark',
+#                 'metrics': batch_metrics
+#             }
+#         except Exception as e:
+#             results['batch'] = {
+#                 'status': 'failed',
+#                 'mode': 'real_spark',
+#                 'error': str(e)
+#             }
+#         
+#         # Test STREAM (real vs simulated)
+#         print("\n🔄 Testing STREAM (real Kafka vs simulated)...")
+#         stream_processor = orchestrator.get_processor('stream')
+#         
+#         # Try real streaming
+#         try:
+#             job_id = str(uuid.uuid4())[:8]
+#             start_time = time.time()
+#             
+#             real_stream_metrics = orchestrator._process_stream_real(stream_processor, filepath, f"stream-real-{job_id}", start_time, current_app.config['PROCESSED_FOLDER'], AnonymizationConfig())
+#             results['stream_real'] = {
+#                 'status': 'success',
+#                 'mode': 'real_kafka_streaming',
+#                 'metrics': real_stream_metrics
+#             }
+#         except Exception as e:
+#             results['stream_real'] = {
+#                 'status': 'failed',
+#                 'mode': 'real_kafka_streaming',
+#                 'error': str(e)
+#             }
+#         
+#         # Note: Simulated streaming removed - only real Kafka streaming supported
+#         
+#         # Test HYBRID (real vs simulated)
+#         print("\n🔄 Testing HYBRID (real Kafka routing vs simulated)...")
+#         hybrid_processor = orchestrator.get_processor('hybrid')
+#         
+#         # Try real hybrid
+#         try:
+#             job_id = str(uuid.uuid4())[:8]
+#             start_time = time.time()
+#             
+#             real_hybrid_metrics = orchestrator._process_hybrid_real(hybrid_processor, filepath, f"hybrid-real-{job_id}", start_time, current_app.config['PROCESSED_FOLDER'], AnonymizationConfig())
+#             results['hybrid_real'] = {
+#                 'status': 'success',
+#                 'mode': 'real_kafka_intelligent_routing',
+#                 'metrics': real_hybrid_metrics
+#             }
+#         except Exception as e:
+#             results['hybrid_real'] = {
+#                 'status': 'failed',
+#                 'mode': 'real_kafka_intelligent_routing',
+#                 'error': str(e)
+#             }
+#         
+#         # Note: Simulated hybrid processing removed - only real Kafka routing supported
+#         
+#         # Generate comparison report
+#         comparison = {
+#             'test_file': filepath,
+#             'timestamp': datetime.now().isoformat(),
+#             'results': results,
+#             'summary': {
+#                 'batch_real_available': results['batch']['status'] == 'success',
+#                 'stream_real_available': results['stream_real']['status'] == 'success',
+#                 'stream_simulated_available': results['stream_simulated']['status'] == 'success',
+#                 'hybrid_real_available': results['hybrid_real']['status'] == 'success',
+#                 'hybrid_simulated_available': results['hybrid_simulated']['status'] == 'success'
+#             }
+#         }
+#         
+#         # Performance comparison if both modes available
+#         if (results['stream_real']['status'] == 'success' and 
+#             results['stream_simulated']['status'] == 'success'):
+#             
+#             real_throughput = results['stream_real']['metrics']['throughput_records_per_second']
+#             sim_throughput = results['stream_simulated']['metrics']['throughput_records_per_second']
+#             
+#             comparison['performance_comparison'] = {
+#                 'stream_real_throughput': real_throughput,
+#                 'stream_simulated_throughput': sim_throughput,
+#                 'throughput_difference_pct': ((real_throughput - sim_throughput) / sim_throughput * 100) if sim_throughput > 0 else 0
+#             }
+#         
+#         return jsonify({
+#             'status': 'success',
+#             'comparison': comparison
+#         })
+#         
+#     except Exception as e:
+#         return jsonify({'error': str(e)}), 500
+
+# @bp.route('/modes/available', methods=['GET'])
+# def get_available_modes():
+#     """Get available processing modes for each pipeline type"""
+#     try:
+#         modes = {
+#             'batch': {
+#                 'real_spark': {
+#                     'available': True,
+#                     'description': 'Apache Spark distributed processing',
+#                     'requirements': ['Spark environment', 'Java runtime'],
+#                     'test_endpoint': '/api/pipeline/test/real-vs-simulated'
+#                 }
+#             },
+#             'stream': {
+#                 'real_kafka_streaming': {
+#                     'available': None,  # Will test
+#                     'description': 'Real Kafka streaming with Storm processing',
+#                     'requirements': ['Kafka broker', 'Topic creation permissions'],
+#                     'test_endpoint': '/api/pipeline/test/real-vs-simulated'
+#                 },
+#                 'simulated_streaming': {
+#                     'available': True,
+#                     'description': 'File-based record-by-record processing simulation',
+#                     'requirements': ['None'],
+#                     'test_endpoint': '/api/pipeline/test/real-vs-simulated'
+#                 }
+#             },
+#             'hybrid': {
+#                 'real_kafka_intelligent_routing': {
+#                     'available': None,  # Will test
+#                     'description': 'Real Kafka with Flink intelligent routing',
+#                     'requirements': ['Kafka broker', 'Topic creation permissions'],
+#                     'test_endpoint': '/api/pipeline/test/real-vs-simulated'
+#                 },
+#                 'simulated_intelligent_routing': {
+#                     'available': True,
+#                     'description': 'File-based processing with real routing logic',
+#                     'requirements': ['None'],
+#                     'test_endpoint': '/api/pipeline/test/real-vs-simulated'
+#                 }
+#             }
+#         }
+#         
+#         # Test Kafka availability
+#         try:
+#             from kafka import KafkaProducer
+#             producer = KafkaProducer(
+#                 bootstrap_servers=['localhost:9093'],
+#                 retries=1,
+#                 request_timeout_ms=5000
+#             )
+#             producer.close()
+#             kafka_available = True
+#         except Exception:
+#             kafka_available = False
+#         
+#         # Update availability based on tests
+#         modes['stream']['real_kafka_streaming']['available'] = kafka_available
+#         modes['hybrid']['real_kafka_intelligent_routing']['available'] = kafka_available
+#         
+#         return jsonify({
+#             'status': 'success',
+#             'kafka_available': kafka_available,
+#             'modes': modes,
+#             'recommendations': {
+#                 'for_research': 'Use real modes when available for accurate performance metrics',
+#                 'for_development': 'Simulated modes work without infrastructure requirements',
+#                 'setup_kafka': 'Run `brew install kafka` or use Docker for real streaming capabilities'
+#             }
+#         })
+#         
+#     except Exception as e:
+#         return jsonify({'error': str(e)}'), 500 
+
+# ================================
+# END COMMENTED OUT PIPELINE ROUTES 
+# ================================
 
 # Initialize optimized streaming at app startup
 def initialize_optimized_streaming():

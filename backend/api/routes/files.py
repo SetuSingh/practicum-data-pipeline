@@ -2,6 +2,7 @@
 """
 File Management API Routes
 Handles file uploads, validation, and sample data generation
+Enhanced with encryption, monitoring, and RBAC
 """
 
 import os
@@ -16,7 +17,27 @@ from ..utils import calculate_file_hash, generate_unique_filename, run_async_tas
 # Import anonymization configuration classes
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
-from src.common.anonymization_engine import AnonymizationConfig, AnonymizationMethod
+
+# Safely import optional components
+try:
+    from src.common.anonymization_engine import AnonymizationConfig, AnonymizationMethod
+except ImportError:
+    print("Warning: Anonymization engine not available")
+    AnonymizationConfig = None
+    AnonymizationMethod = None
+
+try:
+    from src.common.encryption_engine import encryption_engine, change_monitor
+except ImportError:
+    print("Warning: Encryption engine not available")
+    encryption_engine = None
+    change_monitor = None
+
+try:
+    from src.monitoring.prometheus_metrics import metrics_collector
+except ImportError:
+    print("Warning: Metrics collector not available")
+    metrics_collector = None
 
 bp = Blueprint('files', __name__)
 
@@ -66,6 +87,50 @@ def upload_file():
         # Map role to actual user ID from database
         user_id = _get_user_id_for_role(db_connector, user_role)
         
+        # Check user permissions for file upload (STRICT RBAC)
+        has_permission = False
+        try:
+            if db_connector:
+                has_permission = db_connector.check_user_permission(user_id, 'file', 'write')
+            else:
+                # Without database, only allow admin for development
+                has_permission = user_role.lower() == 'admin'
+            
+            if not has_permission:
+                # Import metrics collector safely
+                try:
+                    from src.monitoring.prometheus_metrics import metrics_collector
+                    metrics_collector.track_unauthorized_access(user_id, 'file', 'upload')
+                    print(f"🚫 Unauthorized upload attempt by user {user_id} (role: {user_role})")
+                except Exception as metrics_err:
+                    print(f"Failed to track unauthorized access: {metrics_err}")
+                
+                return jsonify({
+                    'error': 'Insufficient permissions for file upload',
+                    'message': f'User role "{user_role}" is not authorized to upload files',
+                    'required_permission': 'file.write'
+                }), 403
+                
+        except Exception as e:
+            print(f"Permission check failed: {e}")
+            # Fail closed - deny access on permission check errors
+            try:
+                from src.monitoring.prometheus_metrics import metrics_collector
+                metrics_collector.track_unauthorized_access(user_id, 'file', 'upload')
+            except:
+                pass
+            return jsonify({
+                'error': 'Permission check failed',
+                'message': 'Unable to verify user permissions'
+            }), 403
+        
+        # Track data access (safely handle missing metrics)
+        try:
+            from src.monitoring.prometheus_metrics import metrics_collector
+            metrics_collector.track_data_access(user_id, user_role, 'file', 'upload')
+        except Exception as e:
+            print(f"Metrics tracking failed: {e}")
+        
         if file.filename == '':
             return jsonify({'error': 'No file selected'}), 400
         
@@ -80,6 +145,26 @@ def upload_file():
         # Calculate file hash and size
         file_size = os.path.getsize(filepath)
         file_hash = calculate_file_hash(filepath)
+        
+        # Encrypt the uploaded file (safely handle missing encryption)
+        if encryption_engine:
+            try:
+                encrypted_filepath = encryption_engine.encrypt_file(filepath, f"file_{unique_filename}")
+                try:
+                    from src.monitoring.prometheus_metrics import metrics_collector
+                    metrics_collector.track_encryption_operation('encrypt', 'file', 'success')
+                except:
+                    pass  # Ignore metrics errors
+            except Exception as e:
+                try:
+                    from src.monitoring.prometheus_metrics import metrics_collector
+                    metrics_collector.track_encryption_operation('encrypt', 'file', 'failed')
+                except:
+                    pass  # Ignore metrics errors
+                print(f"File encryption failed: {e}")
+                encrypted_filepath = filepath  # Fallback to unencrypted for development
+        else:
+            encrypted_filepath = filepath  # No encryption available
         
         # Auto-detect data type for proper file_type_code
         from ..utils import detect_data_type_from_file

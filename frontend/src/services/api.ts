@@ -1,39 +1,35 @@
 import axios from 'axios'
-import type { 
-  SystemStatus, 
-  ProcessingJob, 
-  DataFile, 
-  User, 
-  AuditLogEntry, 
-  IntegrityStatus, 
-  DatabaseStatistics,
-  ComplianceViolation,
-  AnonymizationParameters
-} from '@/types'
+import type { SystemStatus, ProcessingJob, DataFile, DatabaseRecord, AuditLogEntry, AnonymizationParameters } from '@/types'
 
+// Create axios instance with base configuration
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: 'http://localhost:5001/api',
   timeout: 30000,
+  headers: {
+    'Content-Type': 'application/json',
+  },
 })
 
-// Request interceptor
+// Request interceptor for logging
 api.interceptors.request.use(
   (config) => {
     console.log(`API Request: ${config.method?.toUpperCase()} ${config.url}`)
     return config
   },
   (error) => {
+    console.error('API Request Error:', error)
     return Promise.reject(error)
   }
 )
 
-// Response interceptor
+// Response interceptor for error handling
 api.interceptors.response.use(
   (response) => {
+    console.log(`API Response: ${response.status} ${response.config.url}`)
     return response
   },
   (error) => {
-    console.error('API Error:', error.response?.data || error.message)
+    console.error('API Response Error:', error.response?.data || error.message)
     return Promise.reject(error)
   }
 )
@@ -41,6 +37,17 @@ api.interceptors.response.use(
 // System Status
 export const getSystemStatus = async (): Promise<SystemStatus> => {
   const response = await api.get('/status')
+  return response.data
+}
+
+// Jobs
+export const getJobs = async (): Promise<ProcessingJob[]> => {
+  const response = await api.get('/jobs')
+  return response.data
+}
+
+export const getJobStatus = async (jobId: string): Promise<ProcessingJob> => {
+  const response = await api.get(`/jobs/${jobId}`)
   return response.data
 }
 
@@ -78,79 +85,75 @@ export const uploadFile = async (
   return response.data
 }
 
-// Processing Jobs
-export const getJobs = async (): Promise<ProcessingJob[]> => {
-  const response = await api.get('/jobs')
-  return response.data.jobs
-}
-
-export const getJobStatus = async (jobId: string): Promise<ProcessingJob> => {
-  const response = await api.get(`/jobs/${jobId}`)
-  return response.data
-}
-
-// Sample Data Generation
-export const generateSampleData = async (dataType: string): Promise<{ filename: string; message: string }> => {
-  const response = await api.post('/generate-sample', { data_type: dataType })
-  return response.data
-}
-
-// Schemas
-export const getSchemas = async (): Promise<Record<string, any>> => {
-  const response = await api.get('/schemas')
-  return response.data.schemas
-}
-
-// Data Integrity
-export const getIntegrityStatus = async (): Promise<IntegrityStatus> => {
-  const response = await api.get('/integrity/status')
-  return response.data.data
-}
-
-export const getChangeHistory = async (): Promise<any[]> => {
-  const response = await api.get('/integrity/changes')
-  return response.data.data
-}
-
-export const createBaseline = async (): Promise<{ message: string }> => {
-  const response = await api.post('/integrity/baseline')
-  return response.data
-}
-
-export const checkIntegrity = async (): Promise<{ message: string; results: any }> => {
-  const response = await api.post('/integrity/check')
-  return response.data
-}
-
 // Database Operations
 export const getDatabaseFiles = async (): Promise<DataFile[]> => {
   const response = await api.get('/database/files')
-  return response.data.files
+  return response.data
 }
 
-export const getDatabaseRecords = async (fileId: string): Promise<any[]> => {
+export const getDatabaseRecords = async (fileId: string): Promise<DatabaseRecord[]> => {
   const response = await api.get(`/database/records/${fileId}`)
-  return response.data.records
+  // Handle both array and object with records property
+  if (Array.isArray(response.data)) {
+    return response.data
+  } else if (response.data && response.data.records) {
+    return response.data.records
+  }
+  return []
 }
 
-export const getComplianceViolations = async (): Promise<ComplianceViolation[]> => {
-  const response = await api.get('/database/violations')
-  return response.data.violations
-}
-
-export const getAuditLog = async (): Promise<AuditLogEntry[]> => {
-  const response = await api.get('/database/audit-log')
-  return response.data.audit_log
-}
-
-export const getDatabaseStatistics = async (): Promise<DatabaseStatistics> => {
+export const getDatabaseStatistics = async () => {
   const response = await api.get('/database/statistics')
   return response.data
 }
 
+// Audit Operations
+export const getAuditLog = async (): Promise<AuditLogEntry[]> => {
+  const response = await api.get('/database/audit')
+  return response.data
+}
+
+// User Management
+export interface UserRole {
+  id: number
+  code: string
+  label: string
+  description?: string
+  permissions?: UserPermission[]
+}
+
+export interface UserPermission {
+  permission_code: string
+  permission_label: string
+  resource_type: string
+  action: string
+}
+
+export interface User {
+  id: string
+  username: string
+  full_name?: string
+  email?: string
+  role_code: string
+  role_label: string
+}
+
+// Get available user roles with permissions
+export const getUserRoles = async (): Promise<UserRole[]> => {
+  const response = await api.get('/roles')
+  return response.data.roles
+}
+
+// Get available users
 export const getUsers = async (): Promise<User[]> => {
   const response = await api.get('/users')
   return response.data.users
+}
+
+// Get user permissions
+export const getUserPermissions = async (userId: string): Promise<UserPermission[]> => {
+  const response = await api.get(`/user-permissions/${userId}`)
+  return response.data.permissions
 }
 
 export default api 

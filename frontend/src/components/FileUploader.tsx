@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { Upload, FileText, Loader2 } from 'lucide-react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
-import { uploadFile } from '@/services/api'
+import { uploadFile, getUserRoles } from '@/services/api'
 import type { AnonymizationTechnique, AnonymizationParameters } from '@/types'
 
 interface FileUploaderProps {
@@ -21,6 +21,13 @@ export function FileUploader({ onUploadSuccess }: FileUploaderProps) {
   const [keySize, setKeySize] = useState(256)
   
   const queryClient = useQueryClient()
+
+  // Fetch user roles from database
+  const { data: roles, isLoading: rolesLoading } = useQuery({
+    queryKey: ['user-roles'],
+    queryFn: getUserRoles,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  })
 
   const uploadMutation = useMutation({
     mutationFn: ({ 
@@ -42,7 +49,26 @@ export function FileUploader({ onUploadSuccess }: FileUploaderProps) {
       onUploadSuccess?.(data.job_id)
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.error || 'Upload failed')
+      console.log('Upload error:', error)
+      
+      // Handle 403 Forbidden specifically
+      if (error.response?.status === 403) {
+        const errorData = error.response.data
+        toast.error(
+          `🚫 Access Denied: ${errorData.message || 'Insufficient permissions'}`,
+          {
+            duration: 6000,
+            style: {
+              background: '#FEE2E2',
+              color: '#DC2626',
+              border: '1px solid #FCA5A5'
+            }
+          }
+        )
+      } else {
+        // Handle other errors
+        toast.error(error.response?.data?.error || 'Upload failed')
+      }
     },
   })
 
@@ -68,9 +94,14 @@ export function FileUploader({ onUploadSuccess }: FileUploaderProps) {
 
   return (
     <div className="glass-card rounded-2xl p-6">
-      <h3 className="text-lg font-semibold text-gray-900 mb-4">
-        Upload Data File
-      </h3>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-lg font-semibold text-gray-900">
+          Upload Data File
+        </h3>
+        <div className="text-xs text-gray-500">
+          Testing RBAC: Try uploading with different roles
+        </div>
+      </div>
 
       {/* Pipeline and Role Selection */}
       <div className="grid grid-cols-2 gap-4 mb-6">
@@ -86,7 +117,6 @@ export function FileUploader({ onUploadSuccess }: FileUploaderProps) {
           >
             <option value="batch">Batch Processing</option>
             <option value="stream">Stream Processing</option>
-            <option value="hybrid">Hybrid Processing</option>
           </select>
         </div>
         <div>
@@ -97,14 +127,50 @@ export function FileUploader({ onUploadSuccess }: FileUploaderProps) {
             value={userRole}
             onChange={(e) => setUserRole(e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-            disabled={uploadMutation.isPending}
+            disabled={uploadMutation.isPending || rolesLoading}
           >
-            <option value="admin">Admin</option>
-            <option value="analyst">Data Analyst</option>
-            <option value="user">Regular User</option>
+            {rolesLoading ? (
+              <option value="">Loading roles...</option>
+            ) : roles && roles.length > 0 ? (
+              roles.map((role) => (
+                <option key={role.code} value={role.code}>
+                  {role.label}
+                </option>
+              ))
+            ) : (
+              <>
+                <option value="admin">Admin</option>
+                <option value="data_analyst">Data Analyst</option>
+                <option value="viewer">Regular User</option>
+              </>
+            )}
           </select>
         </div>
       </div>
+
+      {/* Role Permission Info */}
+      {roles && (
+        <div className="mb-6 p-3 bg-gray-50 rounded-lg border">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-sm font-medium text-gray-700">Selected Role: </span>
+              <span className={`text-sm px-2 py-1 rounded-md ${
+                userRole === 'admin' ? 'bg-green-100 text-green-800' :
+                userRole === 'viewer' ? 'bg-red-100 text-red-800' :
+                'bg-blue-100 text-blue-800'
+              }`}>
+                {roles.find(r => r.code === userRole)?.label || userRole}
+              </span>
+            </div>
+            {userRole === 'viewer' && (
+              <div className="flex items-center text-sm text-red-600">
+                <span className="mr-1">⚠️</span>
+                <span>Read-only access</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Anonymization Configuration */}
       <div className="border-t border-gray-200 pt-6 mb-6">
@@ -226,6 +292,11 @@ export function FileUploader({ onUploadSuccess }: FileUploaderProps) {
               <p className="text-sm text-gray-400 mt-1">
                 Maximum file size: 16MB
               </p>
+              {userRole === 'viewer' && (
+                <p className="text-xs text-amber-600 mt-2 font-medium">
+                  ⚠️ Note: Viewer role may have limited upload permissions
+                </p>
+              )}
             </div>
           </div>
         )}

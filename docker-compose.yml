@@ -162,6 +162,8 @@ services:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - secure_pipeline_net
 
   # Prometheus for monitoring
   prometheus:
@@ -172,6 +174,8 @@ services:
       - "9090:9090"
     volumes:
       - ./configs/prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - secure_pipeline_net
 
   # Grafana for dashboards
   grafana:
@@ -182,9 +186,41 @@ services:
       - "3000:3000"
     environment:
       GF_SECURITY_ADMIN_PASSWORD: admin
+      # Ensure Grafana loads provisioning files on startup
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+      GF_INSTALL_PLUGINS: "grafana-piechart-panel"
     volumes:
       - grafana_data:/var/lib/grafana
+      # Mount provisioning and dashboard definitions
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+    networks:
+      - secure_pipeline_net
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: postgres-exporter
+    environment:
+      - DATA_SOURCE_NAME=postgresql://admin:password@postgres:5432/compliance_db?sslmode=disable
+    ports:
+      - "9187:9187"
+    depends_on:
+      - postgres
+    networks:
+      - secure_pipeline_net
+
+  pushgateway:
+    image: prom/pushgateway:v1.8.0
+    container_name: pushgateway
+    ports:
+      - "9092:9091"
+    networks:
+      - secure_pipeline_net
 
 volumes:
   postgres_data:
   grafana_data:
+
+networks:
+  secure_pipeline_net:
+    driver: bridge
